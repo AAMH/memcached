@@ -8,6 +8,7 @@
  * memcached protocol.
  */
 #include "memcached.h"
+#include "shm_malloc.h"
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/resource.h>
@@ -103,7 +104,7 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
 
     if (prealloc) {
         /* Allocate everything in a big chunk with malloc */
-        mem_base = malloc(mem_limit);
+        mem_base = shm_malloc(mem_limit);
         if (mem_base != NULL) {
             mem_current = mem_base;
             mem_avail = mem_limit;
@@ -479,7 +480,7 @@ static void *memory_allocate(size_t size) {
 
     if (mem_base == NULL) {
         /* We are not using a preallocated large memory chunk */
-        ret = malloc(size);
+        ret = shm_malloc(size);
     } else {
         ret = mem_current;
 

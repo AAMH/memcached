@@ -63,7 +63,7 @@ void* shm_malloc(size_t n) {
 }
 
 /* test main */
-/*int main() {
+int main() {
     char *test = shm_malloc(12*sizeof(char));
     strcpy(test, "testingonly");
 
@@ -74,4 +74,3 @@ void* shm_malloc(size_t n) {
     printf("The second test string is: %s\n", test2);
     
 }
-*/
