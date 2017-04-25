@@ -8,14 +8,10 @@
 #include <fcntl.h>      /* O_flags */
 #include <stdio.h>
 #include <stdlib.h>
+#include "shm_malloc.h"
 
-struct tracker {        /* Shared memory structure to keep track of current pointer */
-    size_t cur_size;
-    size_t allocated_size;
-};
-
-int fd1;
-int fd2;
+int tracker_fd;
+int slabs_fd;
 
 struct tracker* track;
 void* slab_start;
@@ -23,9 +19,11 @@ void* slab_start;
 int main(int argc, char **argv)
 {
     size_t mem_allocated;
-    printf("argc: %d\n", argc);
+    
+    //printf("argc: %d\n", argc);
+    /* Parse arguments */
     if(argc == 1) {
-        printf("No memory size specified, defaulting to 2GB");
+        printf("No memory size specified, defaulting to 2GB\n");
         mem_allocated = 2147483648;
     }
     else if(argc > 2) {
@@ -34,6 +32,7 @@ int main(int argc, char **argv)
     }
     else {
         mem_allocated = atoi(argv[1])*1024*1024;
+        //printf("%lu\n", mem_allocated);
     }
     /* Get maximum system shared memory*/
     FILE *f = fopen("/proc/sys/kernel/shmmax", "r");
@@ -46,9 +45,9 @@ int main(int argc, char **argv)
     }
     else {
         fgets(line, sizeof(line), f);
-        printf("line: %s\n", line);
+        //printf("line: %s\n", line);
         max_sz = (size_t) atoi( line );
-        printf("max: %lu\n", (long) max_sz);
+        //printf("max: %lu\n", (long) max_sz);
         fclose(f);
     }
     if (mem_allocated > max_sz-sizeof(struct tracker))
@@ -57,35 +56,37 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    printf("memory allocated (bytes): %d\n", (int) mem_allocated);
-    fd1 = shm_open("/tracker", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    fd2 = shm_open("/slabs", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    if (fd1 == -1) {
+    printf("memory allocated (MB): %lu\n", (long) mem_allocated/1024/1024);
+    
+    /* Initialize tracker and shared memory */
+    tracker_fd = shm_open("/tracker", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    slabs_fd = shm_open("/slabs", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    if (tracker_fd == -1) {
         perror("couldn\'t create tracker struct\n");
         exit(1);
     }
-    if (fd2 == -1) {
+    if (slabs_fd == -1) {
         perror("couldn\'t create shared slab\n");
         exit(1);
     }
-    if (ftruncate(fd1, sizeof(struct tracker)) == -1) {
+    if (ftruncate(tracker_fd, sizeof(struct tracker)) == -1) {
         perror("error truncating tracker\n");
         exit(1);
     }
-    if (ftruncate(fd2, mem_allocated) == -1) {
+    if (ftruncate(slabs_fd, mem_allocated) == -1) {
         perror("error truncating shared slab\n");
         exit(1);
     }    
     /* Map shared memory tracker object */
     track = mmap(NULL, sizeof(struct tracker),
-        PROT_READ | PROT_WRITE, MAP_SHARED, fd1, 0);
+        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
     
-    track->cur_size = mem_allocated;
+    track->max_size = mem_allocated;
     track->allocated_size = 0;
 
     printf("tracking segment initialized\n");
     /* Map shared memory slab segment */
-    slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0); 
+    slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, 0); 
 
     if (track == MAP_FAILED) {
         perror("mapping tracker failed\n");
