@@ -51,7 +51,7 @@ void* shm_malloc(size_t n) {
     }
 
     /* return pointer to allocated memory */
-    rptr = slab_start + track->allocated_size;
+    rptr = (size_t*) slab_start + track->allocated_size;
     /* update allocated memory size */
     track->allocated_size += n;
 
