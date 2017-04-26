@@ -11,6 +11,8 @@
 /* test main */
 int main() {
     char *test = shm_malloc(12*sizeof(char));
+    if(test == NULL)
+	exit(1);
     strcpy(test, "testingonly");
 
     char *test2 = shm_malloc(13*sizeof(char));

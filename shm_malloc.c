@@ -18,9 +18,11 @@ void* shm_malloc(size_t n) {
     void* rptr;         // return pointer
 
     // open tracker
-    tracker_fd = shm_open("/tracker", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    printf("tracker fd: %d\n",tracker_fd);    
     if (tracker_fd == -1) {
         //can't find tracker
+        printf("tracker file not foundi\n");
         return NULL;
     }
 
@@ -40,7 +42,7 @@ void* shm_malloc(size_t n) {
     }
     
     // open shared slab memory region
-    slabs_fd = shm_open("/slabs", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    slabs_fd = shm_open("/slabs",  O_RDWR, S_IRUSR | S_IWUSR);
     if (slabs_fd == -1) {
         return NULL;
     }

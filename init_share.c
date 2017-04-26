@@ -59,8 +59,8 @@ int main(int argc, char **argv)
     printf("memory allocated (MB): %lu\n", (long) mem_allocated/1024/1024);
     
     /* Initialize tracker and shared memory */
-    tracker_fd = shm_open("/tracker", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    slabs_fd = shm_open("/slabs", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open("/tracker", O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+    slabs_fd = shm_open("/slabs", O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         perror("couldn\'t create tracker struct\n");
         exit(1);
