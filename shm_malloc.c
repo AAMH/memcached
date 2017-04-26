@@ -5,7 +5,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stddef.h>
 #include "shm_malloc.h"
+
 
 void* shm_malloc(size_t n) {
     
@@ -62,8 +64,9 @@ void* shm_malloc(size_t n) {
     return rptr;
 }
 
+
 /* test main */
-int main() {
+/*int main() {
     char *test = shm_malloc(12*sizeof(char));
     strcpy(test, "testingonly");
 
@@ -74,3 +77,4 @@ int main() {
     printf("The second test string is: %s\n", test2);
     
 }
+*/
