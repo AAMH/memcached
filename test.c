@@ -10,12 +10,14 @@
 
 /* test main */
 int main() {
-    char *test = shm_malloc(12*sizeof(char));
-    if(test == NULL)
-	exit(1);
-    strcpy(test, "testingonly");
+    char *test = shm_malloc(100000*sizeof(char));
+    //if(test == NULL)
+    //	exit(1);
 
     char *test2 = shm_malloc(13*sizeof(char));
+    int cLen = 100000-1;
+    memset(test,'a', cLen);
+    test[cLen] = '\0';
     strcpy(test2, "testingonly2");
 
     printf("The test string is: %s\n", test);

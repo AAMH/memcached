@@ -58,6 +58,11 @@ static size_t mem_avail = 0;
 static pthread_mutex_t slabs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t slabs_rebalance_lock = PTHREAD_MUTEX_INITIALIZER;
 
+/**
+ * Lock for allocating shared memory
+ */
+//static pthread_mutex_t slabs_shm_malloc_lock = PTHREAD_MUTEX_INITIALIZER;
+
 /*
  * Forward Declarations
  */
@@ -104,7 +109,11 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
 
     if (prealloc) {
         /* Allocate everything in a big chunk with malloc */
+	fprintf(stdout, "mem_limit: %lu\n", mem_limit);
+//        pthread_mutex_lock(&slabs_shm_malloc_lock);
         mem_base = shm_malloc(mem_limit);
+//        pthread_mutex_unlock(&slabs_shm_malloc_lock);
+        fprintf(stdout, "mem_base: %p\n", mem_base);
         if (mem_base != NULL) {
             mem_current = mem_base;
             mem_avail = mem_limit;
@@ -113,9 +122,9 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
                     " one large chunk.\nWill allocate in smaller chunks\n");
         }
     }
-
+    pthread_mutex_lock(&slabs_lock);
     memset(slabclass, 0, sizeof(slabclass));
-
+    pthread_mutex_unlock(&slabs_lock);
     while (++i < MAX_NUMBER_OF_SLAB_CLASSES-1) {
         if (slab_sizes != NULL) {
             if (slab_sizes[i-1] == 0)
@@ -237,8 +246,10 @@ static int do_slabs_newslab(const unsigned int id) {
         MEMCACHED_SLABS_SLABCLASS_ALLOCATE_FAILED(id);
         return 0;
     }
-
+    
+    pthread_mutex_lock(&slabs_lock);
     memset(ptr, 0, (size_t)len);
+    pthread_mutex_unlock(&slabs_lock);
     split_slab_page_into_freelist(ptr, id);
 
     p->slab_list[p->slabs++] = ptr;
@@ -480,7 +491,9 @@ static void *memory_allocate(size_t size) {
 
     if (mem_base == NULL) {
         /* We are not using a preallocated large memory chunk */
+ //       pthread_mutex_lock(&slabs_shm_malloc_lock);
         ret = shm_malloc(size);
+ //       pthread_mutex_unlock(&slabs_shm_malloc_lock);
     } else {
         ret = mem_current;
 
@@ -992,8 +1005,10 @@ static void slab_rebalance_finish(void) {
     d_cls->slab_list[d_cls->slabs++] = slab_rebal.slab_start;
     /* Don't need to split the page into chunks if we're just storing it */
     if (slab_rebal.d_clsid > SLAB_GLOBAL_PAGE_POOL) {
+        pthread_mutex_lock(&slabs_lock);
         memset(slab_rebal.slab_start, 0, (size_t)settings.item_size_max);
-        split_slab_page_into_freelist(slab_rebal.slab_start,
+        pthread_mutex_unlock(&slabs_lock);
+	split_slab_page_into_freelist(slab_rebal.slab_start,
             slab_rebal.d_clsid);
     } else if (slab_rebal.d_clsid == SLAB_GLOBAL_PAGE_POOL) {
         /* mem_malloc'ed might be higher than mem_limit. */
