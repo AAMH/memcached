@@ -8,16 +8,17 @@
 #include <stddef.h>
 #include <unistd.h>
 #include "shm_malloc.h"
-
+#include <pthread.h>
 
 void* shm_malloc(size_t n) {
-    
+    pthread_mutex_t shm_lock = PTHREAD_MUTEX_INITIALIZER;
     int tracker_fd;
     int slabs_fd;
     struct tracker* track;
     void* rptr;         // return pointer
     int PAGESIZE = sysconf(_SC_PAGESIZE);
     // open tracker
+    
     tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
     printf("tracker fd: %d\n",tracker_fd);    
     if (tracker_fd == -1) {
@@ -25,13 +26,13 @@ void* shm_malloc(size_t n) {
         printf("tracker file not foundi\n");
         return NULL;
     }
-
-    
+    pthread_mutex_lock(&shm_lock);
     track = mmap(NULL, sizeof(struct tracker),
         PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
     if (track == MAP_FAILED) {
         return NULL;
     }
+    pthread_mutex_unlock(&shm_lock);
 
     printf("current max memory %lu\n", track->max_size);
     printf("requested allocation: %lu\n", n);
@@ -47,11 +48,14 @@ void* shm_malloc(size_t n) {
     
 
     /* get the beginning of the shared slab memory */
+    pthread_mutex_lock(&shm_lock);
     rptr = mmap(NULL, n,
         PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, track->allocated_size);
     if (rptr == MAP_FAILED) {
         return NULL;
     }
+    pthread_mutex_unlock(&shm_lock);
+
     printf("return_ptr: %p\n", rptr);
     /* printfs for debugging purposes */
     printf("current max_size: %lu\n", track->max_size);
@@ -73,17 +77,4 @@ void* shm_malloc(size_t n) {
 }
 
 
-/* test main */
-/*int main() {
-    char *test = shm_malloc(4*sizeof(char));
-    char *test2 = shm_malloc(13*sizeof(char));
-    int cLen = 4-1;
-    memset(test, 'a', cLen);
-    test[cLen] = '\0';    
-    strcpy(test2, "testingonly3");
-//    printf("The test string is: %s\n", test);
-//    printf("The second test string is: %s\n", test2);
-    
-}
-*/
 
