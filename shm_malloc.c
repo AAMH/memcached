@@ -16,7 +16,8 @@ void* shm_malloc(size_t n) {
     int slabs_fd;
     struct tracker* track;
     void* rptr;         // return pointer
-    int PAGESIZE = sysconf(_SC_PAGESIZE);
+    size_t PAGESIZE = sysconf(_SC_PAGESIZE);
+    printf("page size: %lu\n,", PAGESIZE);   
     // open tracker
     
     tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
@@ -43,14 +44,19 @@ void* shm_malloc(size_t n) {
         return NULL;
     }
     /* align to nearest page */
-    int index = n/PAGESIZE;
+    size_t index = n/PAGESIZE;
     n = (index+1) * PAGESIZE;    
     
+    printf("actual allocated: %lu\n", n);
 
     /* get the beginning of the shared slab memory */
     pthread_mutex_lock(&shm_lock);
+  //  rptr = mmap(NULL, n,
+  //      PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, track->allocated_size);
+    
     rptr = mmap(NULL, n,
-        PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, track->allocated_size);
+        PROT_READ | PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, slabs_fd, 0);
+
     if (rptr == MAP_FAILED) {
         return NULL;
     }
@@ -71,10 +77,13 @@ void* shm_malloc(size_t n) {
     }
     /* update allocated memory size */
     track->allocated_size = track->allocated_size + n;
-          
+//    munmap(rptr, n);          
     printf("return pointer %p\n", rptr); 
+    close(tracker_fd);
+    close(slabs_fd);
     return rptr;
 }
+
 
 
 

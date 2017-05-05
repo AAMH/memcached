@@ -31,8 +31,8 @@ int main(int argc, char **argv)
         exit(1);
     }
     else {
-        mem_allocated = atoi(argv[1])*1024*1024;
-        //printf("%lu\n", mem_allocated);
+        mem_allocated = (size_t)(atoi(argv[1]))*1024*1024;
+        printf("argument 1:%s\n", argv[1]);
     }
     /* Get maximum system shared memory*/
     FILE *f = fopen("/proc/sys/kernel/shmmax", "r");
@@ -95,4 +95,6 @@ int main(int argc, char **argv)
         perror("mapping slab failed\n");
     }
     printf("shared slab initialized\n");
+    close(slabs_fd);
+    close(tracker_fd);
 }
