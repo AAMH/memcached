@@ -9,6 +9,7 @@
 #include <unistd.h>
 #include "shm_malloc.h"
 #include <pthread.h>
+#include <sys/stat.h>
 
 void* shm_malloc(size_t n) {
     pthread_mutex_t shm_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -17,7 +18,9 @@ void* shm_malloc(size_t n) {
     struct tracker* track;
     void* rptr;         // return pointer
     size_t PAGESIZE = sysconf(_SC_PAGESIZE);
-    printf("page size: %lu\n,", PAGESIZE);   
+    struct stat buffer;
+    int ret;
+    printf("page size: %lu\n", PAGESIZE);   
     // open tracker
     
     tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
@@ -38,27 +41,43 @@ void* shm_malloc(size_t n) {
     printf("current max memory %lu\n", track->max_size);
     printf("requested allocation: %lu\n", n);
 
-    // open shared slab memory region
-    slabs_fd = shm_open("/slabs",  O_RDWR, S_IRUSR | S_IWUSR);
+    // open shared slab memory regioni
+    slabs_fd = shm_open("/slabs", O_RDWR, S_IRUSR | S_IWUSR);
     if (slabs_fd == -1) {
         return NULL;
     }
+
+    if((ret = fstat(slabs_fd,&buffer)) < 0) {
+        printf("fstat() on shared memory failed with errno %d\n", errno);
+    	}
+    else
+    {
+        printf("fstat() on shared memory succeeded\n");
+        printf("mode = %d\n", buffer.st_mode);
+        printf("size = %lu\n", buffer.st_size);
+    }
     /* align to nearest page */
-    size_t index = n/PAGESIZE;
+    pthread_mutex_lock(&shm_lock);
+    int index = n/PAGESIZE;
     n = (index+1) * PAGESIZE;    
+    if (write (slabs_fd, "", 1) != 1)
+    {
+	printf ("write error");
+     	return NULL;
+    }
     
     printf("actual allocated: %lu\n", n);
 
     /* get the beginning of the shared slab memory */
-    pthread_mutex_lock(&shm_lock);
-  //  rptr = mmap(NULL, n,
-  //      PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, track->allocated_size);
+    rptr = mmap(0, n,
+        PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, track->allocated_size);
     
-    rptr = mmap(NULL, n,
-        PROT_READ | PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, slabs_fd, 0);
+//    rptr = mmap(NULL, n,
+//        PROT_READ | PROT_WRITE, MAP_SHARED|MAP_ANONYMOUS, slabs_fd, 0);
 
     if (rptr == MAP_FAILED) {
-        return NULL;
+        printf("mmap failed\n");
+ 	return NULL;
     }
     pthread_mutex_unlock(&shm_lock);
 
@@ -76,9 +95,14 @@ void* shm_malloc(size_t n) {
         return NULL;
     }
     /* update allocated memory size */
-    track->allocated_size = track->allocated_size + n;
+    
+    pthread_mutex_lock(&shm_lock);
+    track->allocated_size = track->allocated_size + (off_t)n;
 //    munmap(rptr, n);          
+    
+    pthread_mutex_unlock(&shm_lock);
     printf("return pointer %p\n", rptr); 
+    munmap(track, sizeof(struct tracker));
     close(tracker_fd);
     close(slabs_fd);
     return rptr;

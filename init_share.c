@@ -83,7 +83,6 @@ int main(int argc, char **argv)
     
     track->max_size = mem_allocated;
     track->allocated_size = 0;
-
     printf("tracking segment initialized\n");
     /* Map shared memory slab segment */
     slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, 0); 
