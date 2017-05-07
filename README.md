@@ -1,7 +1,7 @@
 # Memcached with Shared Memory
 Project Members: Xing Li, Moumita Samanta, Saumya Solanki
 
-For the original implementation of memcached which is this forked from please refer the the github link below:
+For the original implementation of memcached which this is forked from please refer the the github link below:
 https://github.com/memcached/memcached
 
 ## Dependencies
