@@ -9,7 +9,8 @@ https://github.com/memcached/memcached
 * librt, in order to allow the use of POSIX shared memory
 
 ## Changes and Motivation
-Implemented a malloc command that allocates from a shared pool or memory reservered only for memcached instances. 
+Implemented a malloc command that allocates from a shared pool of memory reserved only for memcached instances.
+ 
 This allows for a global view of memcached information and allows for future optimizations and more efficient slab allocation algorithms
 
 
