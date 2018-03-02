@@ -233,7 +233,7 @@ static int do_slabs_newslab(const unsigned int id) {
     
      
         if(greedy){
-            struct tracker trck = get_malloc_info();
+            struct tracker trck = get_tracker();
             mem_avail = trck.max_size - trck.allocated_size;
             mem_limit = mem_malloced + mem_avail ;
         }
@@ -546,7 +546,7 @@ static void memory_release() {
         free(p);
         mem_malloced -= settings.item_size_max;
         if(greedy){
-            struct tracker trck = get_malloc_info();
+            struct tracker trck = get_tracker();
             mem_avail = trck.max_size - trck.allocated_size;
             mem_limit = mem_malloced + mem_avail ;
         }
