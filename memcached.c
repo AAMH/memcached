@@ -227,6 +227,7 @@ static void settings_init(void) {
     settings.item_size_max = 1024 * 1024; /* The famous 1MB upper limit. */
     settings.slab_page_size = 1024 * 1024; /* chunks are split from 1MB pages. */
     settings.slab_chunk_size_max = settings.slab_page_size;
+    settings.isGreedy = false;
     settings.sasl = false;
     settings.maxconns_fast = false;
     settings.lru_crawler = false;
@@ -5953,8 +5954,14 @@ int main (int argc, char **argv) {
           "F"   /* Disable flush_all */
           "X"   /* Disable dump commands */
           "o:"  /* Extended generic options */
+          "G"   /* Enable greedy allocation */
         ))) {
         switch (c) {
+        case 'G':
+            /* Enable greedy allocation */
+            settings.isGreedy = true;
+            break;
+                
         case 'A':
             /* enables "shutdown" command */
             settings.shutdown_command = true;
@@ -6551,7 +6558,7 @@ int main (int argc, char **argv) {
     assoc_init(settings.hashpower_init);
     conn_init();
     slabs_init(settings.maxbytes, settings.factor, preallocate,
-            use_slab_sizes ? slab_sizes : NULL);
+            use_slab_sizes ? slab_sizes : NULL, settings.isGreedy);
 
     /*
      * ignore SIGPIPE signals; we can use errno == EPIPE if we
