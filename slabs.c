@@ -50,6 +50,7 @@ static int power_largest;
 static void *mem_base = NULL;
 static void *mem_current = NULL;
 static size_t mem_avail = 0;
+static bool greedy = false;
 
 /**
  * Access to the slab allocator is protected by this lock
@@ -95,18 +96,24 @@ unsigned int slabs_clsid(const size_t size) {
  * Determines the chunk sizes and initializes the slab class descriptors
  * accordingly.
  */
-void slabs_init(const size_t limit, const double factor, const bool prealloc, const uint32_t *slab_sizes) {
+void slabs_init(const size_t limit, const double factor, const bool prealloc, const uint32_t *slab_sizes, const bool isgreedy) {
     int i = POWER_SMALLEST - 1;
     unsigned int size = sizeof(item) + settings.chunk_size;
-
+    greedy = isgreedy;
     mem_limit = limit;
-
+    
     if (prealloc) {
-        /* Allocate everything in a big chunk with malloc */
-        mem_base = shm_malloc(mem_limit);
+        /* Allocate everything in a big chunk with malloc */  
+        struct tracker trck = shm_malloc(mem_limit);
+        mem_base = trck.last_address;
+        if(greedy)
+            mem_limit = trck.max_size;
         if (mem_base != NULL) {
             mem_current = mem_base;
-            mem_avail = mem_limit;
+            if(greedy)
+                mem_avail = trck.max_size - trck.allocated_size;
+            else
+                mem_avail = mem_limit;
         } else {
             fprintf(stderr, "Warning: Failed to allocate requested memory in"
                     " one large chunk.\nWill allocate in smaller chunks\n");
@@ -222,6 +229,15 @@ static int do_slabs_newslab(const unsigned int id) {
         : p->size * p->perslab;
     char *ptr;
 
+ //   printf("mim_limit(this): %lu\n", mem_limit);    
+    
+     
+        if(greedy){
+            struct tracker trck = get_malloc_info();
+            mem_avail = trck.max_size - trck.allocated_size;
+            mem_limit = mem_malloced + mem_avail ;
+        }
+    
     if ((mem_limit && mem_malloced + len > mem_limit && p->slabs > 0
          && g->slabs == 0)) {
         mem_limit_reached = true;
@@ -435,6 +451,10 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
             char key_str[STAT_KEY_LEN];
             char val_str[STAT_VAL_LEN];
             int klen = 0, vlen = 0;
+            
+            for(int j = 0;j < p->slabs; j++){
+            APPEND_NUM_STAT(i, "slab pointer", "%p", p->slab_list[j]);
+            } 
 
             APPEND_NUM_STAT(i, "chunk_size", "%u", p->size);
             APPEND_NUM_STAT(i, "chunks_per_page", "%u", perslab);
@@ -476,10 +496,15 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
 
 static void *memory_allocate(size_t size) {
     void *ret;
-
+    
     if (mem_base == NULL) {
-        /* We are not using a preallocated large memory chunk */
-        ret = shm_malloc(size);
+        /* We are not using a preallocated large memory chunk */  
+        struct tracker trck = shm_malloc(size);
+        ret = trck.last_address;
+        if(greedy){
+            mem_avail = trck.max_size - trck.allocated_size;
+            mem_limit = mem_malloced + mem_avail ;
+        }
     } else {
         ret = mem_current;
 
@@ -500,7 +525,10 @@ static void *memory_allocate(size_t size) {
         }
     }
     mem_malloced += size;
-
+    printf("total allocated mem(this): %lu\n", mem_malloced);   
+    if(greedy){
+        mem_limit = mem_malloced + mem_avail ;
+    }
     return ret;
 }
 
@@ -517,6 +545,11 @@ static void memory_release() {
             (p = get_page_from_global_pool()) != NULL) {
         free(p);
         mem_malloced -= settings.item_size_max;
+        if(greedy){
+            struct tracker trck = get_malloc_info();
+            mem_avail = trck.max_size - trck.allocated_size;
+            mem_limit = mem_malloced + mem_avail ;
+        }
     }
 }
 
