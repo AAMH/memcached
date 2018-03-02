@@ -345,6 +345,7 @@ struct settings {
     int detail_enabled;     /* nonzero if we're collecting detailed stats */
     int reqs_per_event;     /* Maximum number of io to process on each
                                io-event. */
+    bool isGreedy;
     bool use_cas;
     enum protocol binding_protocol;
     int backlog;
