@@ -8,18 +8,21 @@
 #include <fcntl.h>      /* O_flags */
 #include <stdio.h>
 #include <stdlib.h>
+#include <semaphore.h>
 #include "shm_malloc.h"
 
 int tracker_fd;
 int slabs_fd;
+
+sem_t * mutex;
 
 struct tracker* track;
 void* slab_start;
 
 int main(int argc, char **argv)
 {
-    size_t mem_allocated;
     
+    size_t mem_allocated;
     //printf("argc: %d\n", argc);
     /* Parse arguments */
     if(argc == 1) {
@@ -58,6 +61,14 @@ int main(int argc, char **argv)
 
     printf("memory allocated (MB): %lu\n", (long) mem_allocated/1024/1024);
     
+    
+    /* Initialize Semaphore */
+    
+    if ((mutex = sem_open("/semaph", O_CREAT, 0644, 1)) == SEM_FAILED) {
+    perror("semaphore initilization failed");
+    exit(1);
+    }
+    
     /* Initialize tracker and shared memory */
     tracker_fd = shm_open("/tracker", O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
     slabs_fd = shm_open("/slabs", O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
@@ -85,7 +96,9 @@ int main(int argc, char **argv)
     track->allocated_size = 0;
     printf("tracking segment initialized\n");
     /* Map shared memory slab segment */
-    slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED, slabs_fd, 0); 
+    slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd, 0); 
+
+    track->start_address = slab_start;
 
     if (track == MAP_FAILED) {
         perror("mapping tracker failed\n");
@@ -93,6 +106,7 @@ int main(int argc, char **argv)
     if (slab_start == MAP_FAILED) {
         perror("mapping slab failed\n");
     }
+    printf("slab starts on %p\n", track->start_address);
     printf("shared slab initialized\n");
     close(slabs_fd);
     close(tracker_fd);
