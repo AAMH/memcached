@@ -26,7 +26,7 @@ int main() {
         exit(1);
     }
     printf("current max memory: %lu\n", track->max_size);
-    printf("current allocation size: %lu\n", track->allocated_size);
+    printf("current allocation size: %lu\n", track->head_offset);
 
 }
 

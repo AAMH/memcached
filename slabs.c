@@ -37,6 +37,13 @@ typedef struct {
     unsigned int list_size; /* size of prev array */
 
     size_t requested; /* The number of requested bytes */
+
+/*** shadow queue Additions ***/
+    shadow_item *shadowq_head;
+    shadow_item *shadowq_tail;
+    unsigned int shadowq_size;
+    int shadowq_hits;
+    uint32_t shadowq_max_items;
 } slabclass_t;
 
 static slabclass_t slabclass[MAX_NUMBER_OF_SLAB_CLASSES];
@@ -50,6 +57,8 @@ static int power_largest;
 static void *mem_base = NULL;
 static void *mem_current = NULL;
 static size_t mem_avail = 0;
+static int prev_victim = POWER_SMALLEST;
+static int slab_shadowq_dec_victim = POWER_SMALLEST;
 static bool greedy = false;
 
 /**
@@ -103,15 +112,16 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
     mem_limit = limit;
     
     if (prealloc) {
-        /* Allocate everything in a big chunk with malloc */  
-        struct tracker trck = shm_malloc(mem_limit);
-        mem_base = trck.last_address;
+        /* Allocate everything in a big chunk with malloc */ 
+        void * ptr = shm_malloc(mem_limit);
+        struct tracker  trck = get_tracker();
+        mem_base = trck.avail_address;
         if(greedy)
             mem_limit = trck.max_size;
         if (mem_base != NULL) {
             mem_current = mem_base;
             if(greedy)
-                mem_avail = trck.max_size - trck.allocated_size;
+                mem_avail = trck.max_size - trck.used_size;
             else
                 mem_avail = mem_limit;
         } else {
@@ -136,6 +146,9 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
 
         slabclass[i].size = size;
         slabclass[i].perslab = settings.slab_page_size / slabclass[i].size;
+        slabclass[i].shadowq_max_items = settings.shadowq_size / slabclass[i].size;
+        printf("shadowq_max_items: queue %d, slab_size %d, perslab %d, shadowq_size %d\n",i,size,slabclass[i].perslab, slabclass[i].shadowq_max_items);
+
         if (slab_sizes == NULL)
             size *= factor;
         if (settings.verbose > 1) {
@@ -227,24 +240,24 @@ static int do_slabs_newslab(const unsigned int id) {
     int len = (settings.slab_reassign || settings.slab_chunk_size_max != settings.slab_page_size)
         ? settings.slab_page_size
         : p->size * p->perslab;
-    char *ptr;
+    char *ptr; 
 
- //   printf("mim_limit(this): %lu\n", mem_limit);    
-    
-     
-        if(greedy){
-            struct tracker trck = get_tracker();
-            mem_avail = trck.max_size - trck.allocated_size;
-            mem_limit = mem_malloced + mem_avail ;
-        }
-    
-    if ((mem_limit && mem_malloced + len > mem_limit && p->slabs > 0
-         && g->slabs == 0)) {
-        mem_limit_reached = true;
-        MEMCACHED_SLABS_SLABCLASS_ALLOCATE_FAILED(id);
-        return 0;
+    if(greedy && !mem_limit_reached){   
+        struct tracker trck = get_tracker();     
+        mem_avail = trck.max_size - trck.used_size;
+        mem_limit = mem_malloced + mem_avail ;
     }
 
+    if ((mem_limit && mem_malloced + len > mem_limit && p->slabs > 0
+        && g->slabs == 0)) {
+            mem_limit_reached = true;
+            MEMCACHED_SLABS_SLABCLASS_ALLOCATE_FAILED(id);
+            return 0;
+        }
+
+    if(mem_limit_reached)
+        return 0;
+    
     if ((grow_slab_list(id) == 0) ||
         (((ptr = get_page_from_global_pool()) == NULL) &&
         ((ptr = memory_allocate((size_t)len)) == 0))) {
@@ -469,6 +482,8 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
                             (unsigned long long)p->requested);
             APPEND_NUM_STAT(i, "get_hits", "%llu",
                     (unsigned long long)thread_stats.slab_stats[i].get_hits);
+            APPEND_NUM_STAT(i, "shadowq_hits", "%llu",
+                     (unsigned long long)thread_stats.slab_stats[i].shadowq_hits);
             APPEND_NUM_STAT(i, "cmd_set", "%llu",
                     (unsigned long long)thread_stats.slab_stats[i].set_cmds);
             APPEND_NUM_STAT(i, "delete_hits", "%llu",
@@ -494,15 +509,83 @@ static void do_slabs_stats(ADD_STAT add_stats, void *c) {
     add_stats(NULL, 0, NULL, 0, c);
 }
 
+// void force_release() {
+
+//     int i = 0;
+//     int j = MAX_NUMBER_OF_SLAB_CLASSES-1;
+//     slabclass_t *sc = &slabclass[j];
+//     while (sc->slabs < 1 && j >= 0) {
+//             sc = &slabclass[--j];        
+//     }
+//     for(int i = 0; i < 100; i++){
+//         for(int k = sc->slabs - 1; k >= 0;k--){
+//             printf("Number : %d From class : %d\n",i,j);
+//             void *p = sc->slab_list[k];
+//             sc->slabs--;
+             
+//             mem_malloced -= 1051936; 
+//             add_released(p, 1051936);
+//             struct tracker trck = get_tracker();
+//             mem_avail = trck.max_size - trck.used_size;
+//             mem_limit = mem_malloced + mem_avail ;
+
+//             printf("PAGE RELEASED at %p! \n",p);
+//             if(k > 0)
+//                 i++;
+//             if(i>=100)
+//                 break;
+//      //   free(p);
+//         }
+//         sc = &slabclass[--j];
+//         while (sc->slabs < 1 && j >= 0) {
+//             sc = &slabclass[--j];        
+//         }
+//         if(j < 0)
+//             break;
+//     }
+// }
+
+// void force_allocate(){
+
+//     int id = 3;
+//     slabclass_t *p = &slabclass[id];
+
+//     int len = (settings.slab_reassign || settings.slab_chunk_size_max != settings.slab_page_size)
+//         ? settings.slab_page_size
+//         : p->size * p->perslab;
+
+//     //size_t size = (size_t) len;
+//     size_t size = (size_t) 1047840;
+
+//     for(int i = 0;i < 100; i++){
+//         void *ptr = shm_malloc2(size);
+//         if(ptr != NULL){
+//             struct tracker trck = get_tracker();
+            
+//             mem_avail = trck.max_size - trck.used_size;
+//             mem_malloced += size;
+//             mem_limit = mem_malloced + mem_avail ;
+            
+//             printf("total allocated mem(this): %lu\n", mem_malloced);  
+
+//         //  memset(ptr, 0, size);
+//         //  split_slab_page_into_freelist(ptr, id);
+
+//             p->slab_list[p->slabs++] = ptr;
+//             MEMCACHED_SLABS_SLABCLASS_ALLOCATE(id);
+//         }
+//     }
+// }
+
 static void *memory_allocate(size_t size) {
     void *ret;
     
     if (mem_base == NULL) {
         /* We are not using a preallocated large memory chunk */  
-        struct tracker trck = shm_malloc(size);
-        ret = trck.last_address;
+        ret = shm_malloc(size);
+        struct tracker trck = get_tracker();
         if(greedy){
-            mem_avail = trck.max_size - trck.allocated_size;
+            mem_avail = trck.max_size - trck.used_size;
             mem_limit = mem_malloced + mem_avail ;
         }
     } else {
@@ -525,7 +608,7 @@ static void *memory_allocate(size_t size) {
         }
     }
     mem_malloced += size;
-    printf("total allocated mem(this): %lu\n", mem_malloced);   
+    printf("total allocated mem(this): %lu\n", mem_malloced);  
     if(greedy){
         mem_limit = mem_malloced + mem_avail ;
     }
@@ -545,13 +628,10 @@ static void memory_release() {
             (p = get_page_from_global_pool()) != NULL) {
         free(p);
         mem_malloced -= settings.item_size_max;
-        if(greedy){
-            struct tracker trck = get_tracker();
-            mem_avail = trck.max_size - trck.allocated_size;
-            mem_limit = mem_malloced + mem_avail ;
-        }
     }
 }
+
+
 
 void *slabs_alloc(size_t size, unsigned int id, uint64_t *total_bytes,
         unsigned int flags) {
@@ -644,6 +724,10 @@ static pthread_cond_t slab_rebalance_cond = PTHREAD_COND_INITIALIZER;
 static volatile int do_run_slab_thread = 1;
 static volatile int do_run_slab_rebalance_thread = 1;
 
+static bool rebal_source_ext = false;       // indicating if reassigning is being used to take memory from an external source
+static bool rebal_dest_ext = false;         // indicating if reassigning is being used to give memory to an external destination
+static bool is_taken_careof = false;
+
 #define DEFAULT_SLAB_BULK_CHECK 1
 int slab_bulk_check = DEFAULT_SLAB_BULK_CHECK;
 
@@ -653,39 +737,97 @@ static int slab_rebalance_start(void) {
 
     pthread_mutex_lock(&slabs_lock);
 
-    if (slab_rebal.s_clsid < POWER_SMALLEST ||
-        slab_rebal.s_clsid > power_largest  ||
-        slab_rebal.d_clsid < SLAB_GLOBAL_PAGE_POOL ||
-        slab_rebal.d_clsid > power_largest  ||
-        slab_rebal.s_clsid == slab_rebal.d_clsid)
-        no_go = -2;
+    /* source is not external AND it's not just releasing for someone else*/
+    if(!rebal_source_ext && !rebal_dest_ext){
+        if (slab_rebal.s_clsid < POWER_SMALLEST ||
+            slab_rebal.s_clsid > power_largest  ||
+            slab_rebal.d_clsid < SLAB_GLOBAL_PAGE_POOL ||
+            slab_rebal.d_clsid > power_largest  ||
+            slab_rebal.s_clsid == slab_rebal.d_clsid)
+            no_go = -2;
 
-    s_cls = &slabclass[slab_rebal.s_clsid];
+         s_cls = &slabclass[slab_rebal.s_clsid];
 
-    if (!grow_slab_list(slab_rebal.d_clsid)) {
-        no_go = -1;
+        if (s_cls->slabs < 2)
+            no_go = -3;
+
+        if (!grow_slab_list(slab_rebal.d_clsid)) {
+            no_go = -1;
+        }
+    } // source of the reassigning is not from this tenant
+    else if(rebal_source_ext && !rebal_dest_ext){
+        if (slab_rebal.d_clsid < SLAB_GLOBAL_PAGE_POOL ||
+            slab_rebal.d_clsid > power_largest)
+            no_go = -2;
+
+        s_cls = &slabclass[slab_rebal.s_clsid];
+        
+        if (!grow_slab_list(slab_rebal.d_clsid)) {
+            no_go = -1;
+        }
+    } // destination of the reassigning is not from this tenant
+    else if(rebal_dest_ext){
+        if (slab_rebal.s_clsid < POWER_SMALLEST ||
+            slab_rebal.s_clsid > power_largest  ||
+            slab_rebal.s_clsid == slab_rebal.d_clsid)
+            no_go = -2;
+
+        s_cls = &slabclass[slab_rebal.s_clsid];
+
+        if (s_cls->slabs < 2)
+            no_go = -3;
     }
 
-    if (s_cls->slabs < 2)
-        no_go = -3;
+ //   s_cls = &slabclass[slab_rebal.s_clsid];
+
 
     if (no_go != 0) {
         pthread_mutex_unlock(&slabs_lock);
         return no_go; /* Should use a wrapper function... */
     }
 
-    /* Always kill the first available slab page as it is most likely to
-     * contain the oldest items
-     */
-    slab_rebal.slab_start = s_cls->slab_list[0];
-    slab_rebal.slab_end   = (char *)slab_rebal.slab_start +
-        (s_cls->size * s_cls->perslab);
-    slab_rebal.slab_pos   = slab_rebal.slab_start;
-    slab_rebal.done       = 0;
+    /* If victim is external or this task was taken care of by another thread */
+    if (rebal_source_ext && !is_taken_careof){
+        is_taken_careof = true;
+        slab_rebal.slab_start = shm_mallocAt((size_t)settings.item_size_max);// get_spare_mem();
+        printf("    address: %p \n",slab_rebal.slab_start);
+        reset_locks();
+        slab_rebal.slab_end   = (char *)slab_rebal.slab_start +
+            (s_cls->size * s_cls->perslab);
+        slab_rebal.slab_pos   = slab_rebal.slab_start;
+        slab_rebal.done       = 1;      // a naive way to force the thread enter the finishing state
 
-    /* Also tells do_item_get to search for items in this slab */
-    slab_rebalance_signal = 2;
+        slab_rebalance_signal = 5;      // a naive way to prevent the reassigning thread from trying to move the source slab (since there is no source slab in this case)
 
+    } /* If destination is external or this task was taken care of by another thread */
+    else if(rebal_dest_ext && !is_taken_careof){
+        is_taken_careof = true;
+        set_spare_mem(s_cls->slab_list[0],slab_rebal.s_clsid);
+        slab_rebal.slab_start = s_cls->slab_list[0];
+        printf("    address: %p \n",slab_rebal.slab_start);
+        slab_rebal.slab_end   = (char *)slab_rebal.slab_start +
+            (s_cls->size * s_cls->perslab);
+        slab_rebal.slab_pos   = slab_rebal.slab_start;
+        slab_rebal.done       = 0;
+
+        slab_rebalance_signal = 6;
+
+    } /* normal case : reassigning inside the instance */
+    else if(!rebal_dest_ext && !rebal_source_ext){
+        /* Always kill the first available slab page as it is most likely to
+        * contain the oldest items
+        */
+        slab_rebal.slab_start = s_cls->slab_list[0];
+        slab_rebal.slab_end   = (char *)slab_rebal.slab_start +
+            (s_cls->size * s_cls->perslab);
+        slab_rebal.slab_pos   = slab_rebal.slab_start;
+        slab_rebal.done       = 0;
+
+        /* Also tells do_item_get to search for items in this slab */
+        slab_rebalance_signal = 2;
+        
+    }
+        
     if (settings.verbose > 1) {
         fprintf(stderr, "Started a slab rebalance\n");
     }
@@ -996,7 +1138,8 @@ static void slab_rebalance_finish(void) {
     pthread_mutex_lock(&slabs_lock);
 
     s_cls = &slabclass[slab_rebal.s_clsid];
-    d_cls = &slabclass[slab_rebal.d_clsid];
+    if(slab_rebal.d_clsid != -2)        // When destination is external
+        d_cls = &slabclass[slab_rebal.d_clsid];
 
 #ifdef DEBUG_SLAB_MOVER
     /* If the algorithm is broken, live items can sneak in. */
@@ -1016,20 +1159,39 @@ static void slab_rebalance_finish(void) {
      * We always kill the "first"/"oldest" slab page in the slab_list, so
      * shuffle the page list backwards and decrement.
      */
-    s_cls->slabs--;
-    for (x = 0; x < s_cls->slabs; x++) {
-        s_cls->slab_list[x] = s_cls->slab_list[x+1];
+    if(!rebal_source_ext){      // No need to do this when we are in receiver side of reassigning
+        s_cls->slabs--;
+        for (x = 0; x < s_cls->slabs; x++) {
+            s_cls->slab_list[x] = s_cls->slab_list[x+1];
+        }
+        if(rebal_dest_ext){
+            munmap(slab_rebal.slab_start,(size_t)settings.item_size_max);
+        }
     }
-
-    d_cls->slab_list[d_cls->slabs++] = slab_rebal.slab_start;
-    /* Don't need to split the page into chunks if we're just storing it */
-    if (slab_rebal.d_clsid > SLAB_GLOBAL_PAGE_POOL) {
-        memset(slab_rebal.slab_start, 0, (size_t)settings.item_size_max);
-        split_slab_page_into_freelist(slab_rebal.slab_start,
-            slab_rebal.d_clsid);
-    } else if (slab_rebal.d_clsid == SLAB_GLOBAL_PAGE_POOL) {
-        /* mem_malloc'ed might be higher than mem_limit. */
-        memory_release();
+    
+    /* taking care of destination */
+    if(!rebal_dest_ext){    
+        d_cls->slab_list[d_cls->slabs++] = slab_rebal.slab_start;
+        /* Don't need to split the page into chunks if we're just storing it */
+        if (slab_rebal.d_clsid > SLAB_GLOBAL_PAGE_POOL) {
+            memset(slab_rebal.slab_start, 0, (size_t)settings.item_size_max);
+            if(!rebal_source_ext)
+                split_slab_page_into_freelist(slab_rebal.slab_start,
+                    slab_rebal.d_clsid);
+        } else if (slab_rebal.d_clsid == SLAB_GLOBAL_PAGE_POOL) {
+            /* mem_malloc'ed might be higher than mem_limit. */
+            memory_release();
+        }
+    }
+    
+    /* adjust memory limit since a slab was reassigned to/from external source/destination */
+    if(rebal_source_ext || rebal_dest_ext){
+        if(rebal_source_ext)
+            mem_malloced += (size_t)settings.item_size_max;
+        else
+            mem_malloced -= (size_t)settings.item_size_max;
+        mem_limit = mem_malloced + mem_avail ;
+        printf("total allocated mem(this) : %ld\n",mem_malloced);
     }
 
     slab_rebal.done       = 0;
@@ -1046,6 +1208,9 @@ static void slab_rebalance_finish(void) {
     slab_rebal.inline_reclaim = 0;
     slab_rebal.rescues  = 0;
 
+
+    rebal_source_ext = false;
+    rebal_dest_ext = false;
     slab_rebalance_signal = 0;
 
     pthread_mutex_unlock(&slabs_lock);
@@ -1080,7 +1245,7 @@ static void *slab_rebalance_thread(void *arg) {
             }
 
             was_busy = 0;
-        } else if (slab_rebalance_signal && slab_rebal.slab_start != NULL) {
+        } else if (!rebal_source_ext && slab_rebalance_signal != 0 && slab_rebal.slab_start != NULL) {
             was_busy = slab_rebalance_move();
         }
 
@@ -1125,7 +1290,8 @@ static enum reassign_result_type do_slabs_reassign(int src, int dst) {
         return REASSIGN_RUNNING;
 
     if (src == dst)
-        return REASSIGN_SRC_DST_SAME;
+        if(!rebal_source_ext)   // two slabs being in the same class is not a problem when they are from different tenants 
+            return REASSIGN_SRC_DST_SAME;
 
     /* Special indicator to choose ourselves. */
     if (src == -1) {
@@ -1133,19 +1299,34 @@ static enum reassign_result_type do_slabs_reassign(int src, int dst) {
         /* TODO: If we end up back at -1, return a new error type */
     }
 
-    if (src < POWER_SMALLEST        || src > power_largest ||
-        dst < SLAB_GLOBAL_PAGE_POOL || dst > power_largest)
-        return REASSIGN_BADCLASS;
+    /* Indicating that victim is from an external source */
+    if(rebal_source_ext){
+         if (dst < SLAB_GLOBAL_PAGE_POOL || dst > power_largest)
+            return REASSIGN_BADCLASS;
+    }
+    else if(rebal_dest_ext){
+        if (src < POWER_SMALLEST        || src > power_largest )
+            return REASSIGN_BADCLASS;
 
-    if (slabclass[src].slabs < 2)
-        return REASSIGN_NOSPARE;
+        if (slabclass[src].slabs < 2)
+            return REASSIGN_NOSPARE;
+    }
+    else{
+        if (src < POWER_SMALLEST        || src > power_largest ||
+            dst < SLAB_GLOBAL_PAGE_POOL || dst > power_largest)
+            return REASSIGN_BADCLASS;
+
+        if (slabclass[src].slabs < 2)
+            return REASSIGN_NOSPARE;
+
+    }
 
     slab_rebal.s_clsid = src;
     slab_rebal.d_clsid = dst;
 
     slab_rebalance_signal = 1;
     pthread_cond_signal(&slab_rebalance_cond);
-
+    
     return REASSIGN_OK;
 }
 
@@ -1196,6 +1377,20 @@ int start_slab_maintenance_thread(void) {
     return 0;
 }
 
+int start_slab_rebalance_thread(void) {
+     int ret;
+     slab_rebalance_signal = 0;
+     slab_rebal.slab_start = NULL;
+
+     if ((ret = pthread_create(&rebalance_tid, NULL,
+                           slab_rebalance_thread, NULL)) != 0) {
+         fprintf(stderr, "Can't create rebal thread: %s\n", strerror(ret));
+         return -1;
+     }
+     return 0;
+ }
+
+
 /* The maintenance thread is on a sleep/loop cycle, so it should join after a
  * short wait */
 void stop_slab_maintenance_thread(void) {
@@ -1208,3 +1403,90 @@ void stop_slab_maintenance_thread(void) {
     /* Wait for the maintenance thread to stop */
     pthread_join(rebalance_tid, NULL);
 }
+
+void stop_slab_rebalance_thread(void) {
+     mutex_lock(&slabs_rebalance_lock);
+     do_run_slab_thread = 0;
+     do_run_slab_rebalance_thread = 0;
+     pthread_cond_signal(&slab_rebalance_cond);
+     pthread_mutex_unlock(&slabs_rebalance_lock);
+     pthread_join(rebalance_tid, NULL);
+}
+
+shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
+
+    uint32_t hv = hash(key, nkey);
+    shadow_item* shadow_it = shadow_assoc_find(key, nkey, hv);
+  
+    // Spare slab is not available, so it should add one slab to the pool
+    if(!is_spare_locked() && slab_rebalance_signal != 5 && !is_spare_avail() && !rebal_dest_ext){
+        rebal_dest_ext  = true;
+        is_taken_careof = false;
+        int counter = 0; //make sure we are not stuck in case there are no more slabs left
+        do {
+            if (counter++ > power_largest - POWER_SMALLEST + 1)
+                break;
+            prev_victim = ((prev_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
+        } while ((slabclass[prev_victim].slabs <= 1) || prev_victim == 5); // slab class 5 as the source led to strange behaviour, should be taken care of later
+                
+        printf("External REASSIGN: Releasing Memory from class %d\n", prev_victim);
+        do_slabs_reassign(prev_victim,-2);  // -2 means it's located in another tenant
+    }
+
+    if (shadow_it) {
+        //move to head
+        remove_shadowq_item(shadow_it);
+        insert_shadowq_item(shadow_it, shadow_it->slabs_clsid);
+
+        //update shadowq hit counters
+        do {
+            slab_shadowq_dec_victim = ((slab_shadowq_dec_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
+        } while (slab_shadowq_dec_victim == shadow_it->slabs_clsid);
+        slabclass[slab_shadowq_dec_victim].shadowq_hits--;
+        slabclass[shadow_it->slabs_clsid].shadowq_hits++;
+
+        //Slab rebalance
+        if ((slabclass[shadow_it->slabs_clsid].shadowq_hits) > SHADOWQ_HIT_THRESHOLD) {
+
+            bool ext_mem_avail = is_spare_avail();
+            int ext_victim_clsid = -1;
+            int count = 0;
+            ext_victim_clsid = get_spare_clsid();
+            
+            // could not find a spare slab in the pool, reassigning will be done internally
+            if(!ext_mem_avail){
+                rebal_source_ext = false; 
+                rebal_dest_ext   = false;
+                int counter = 0; //make sure we are not stuck in case there are no more slabs left
+                do {
+                    if (counter++ > power_largest - POWER_SMALLEST + 1)
+                        break;
+                    prev_victim = ((prev_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
+                } while ((prev_victim == shadow_it->slabs_clsid) || (slabclass[prev_victim].slabs <= 1));
+
+                printf("Internal REASSIGN: class %d  TO  class %d\n", prev_victim, shadow_it->slabs_clsid);
+                slabclass[shadow_it->slabs_clsid].shadowq_hits = 0; 
+                do_slabs_reassign(prev_victim,shadow_it->slabs_clsid);
+            } // a spare was found, will try to use it as the source
+            else if(ext_victim_clsid != -1 && ext_mem_avail) {
+                rebal_source_ext = true;
+                rebal_dest_ext   = false;
+                is_taken_careof  = false;
+                printf("External REASSIGN: Requested memory for class %d\n", shadow_it->slabs_clsid);
+                slabclass[shadow_it->slabs_clsid].shadowq_hits = 0; 
+                do_slabs_reassign(ext_victim_clsid,shadow_it->slabs_clsid);
+            }
+        }
+    }
+
+    return shadow_it;
+}
+
+ shadow_item* get_shadowq_head(unsigned int id) { return (slabclass[id].shadowq_head); }
+ void set_shadowq_head(shadow_item *elem, unsigned int id) { slabclass[id].shadowq_head = elem; }
+ shadow_item* get_shadowq_tail(unsigned int id) { return (slabclass[id].shadowq_tail); }
+ void set_shadowq_tail(shadow_item *elem, unsigned int id) { slabclass[id].shadowq_tail = elem; }
+ unsigned int get_shadowq_max_items(unsigned int id) { return (slabclass[id].shadowq_max_items); }
+ unsigned int get_shadowq_size(unsigned int id) { return (slabclass[id].shadowq_size); }
+ void dec_shadowq_size(unsigned int id) { slabclass[id].shadowq_size--; }
+ void inc_shadowq_size(unsigned int id) { slabclass[id].shadowq_size++; }

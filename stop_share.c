@@ -12,4 +12,5 @@ int main () {
     shm_unlink("/slabs");
     shm_unlink("/tracker");
     shm_unlink("/semaph");
+    shm_unlink("/shadow");
 }

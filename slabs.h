@@ -46,6 +46,9 @@ void slabs_munlock(void);
 int start_slab_maintenance_thread(void);
 void stop_slab_maintenance_thread(void);
 
+int start_slab_rebalance_thread(void);
+void stop_slab_rebalance_thread(void);
+
 enum reassign_result_type {
     REASSIGN_OK=0, REASSIGN_RUNNING, REASSIGN_BADCLASS, REASSIGN_NOSPARE,
     REASSIGN_SRC_DST_SAME
@@ -55,5 +58,18 @@ enum reassign_result_type slabs_reassign(int src, int dst);
 
 void slabs_rebalancer_pause(void);
 void slabs_rebalancer_resume(void);
+
+
+shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey);
+shadow_item* get_shadowq_head(unsigned int id);
+void set_shadowq_head(shadow_item *elem, unsigned int id);
+shadow_item* get_shadowq_tail(unsigned int id);
+void set_shadowq_tail(shadow_item *elem, unsigned int id);
+unsigned int get_shadowq_max_items(unsigned int id);
+unsigned int get_shadowq_size(unsigned int id);
+void dec_shadowq_size(unsigned int id);
+void inc_shadowq_size(unsigned int id);
+
+void force_release(void);
 
 #endif
