@@ -148,8 +148,7 @@ void * shm_mallocAt(size_t n){
     if((ret = fstat(slabs_fd,&buffer)) < 0) {
         printf("fstat() on shared memory failed with errno %d\n", errno);
     }
-
-    /* get the next available address of the shared memory */  
+  
     rptr = mmap(track->spare_mem_start , n,
         PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd, 0);
 
