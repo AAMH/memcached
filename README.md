@@ -15,7 +15,7 @@ Currently, if instances are run using -G (greedy) they will request to take memo
 * Make (make sure you have librt, libevent installed on your system)
 * Compile init_share and stop_share (i.e. gcc -o init_share init_share.c -lrt -pthread)
 * Run ./init_share XXXX (MB) with the total amount of shared memory you need.
-* Run memcached instances (i.e. ./memcached -p 11212 -t 4 -m 4096 -n 550 -G)
+* Run memcached instances (i.e. ./memcached -p 11212 -t 4 -m 4096 -n 550 -G).<br />
   Option G indicates the greedy approach of memory allocation, if not specified, instances will get memory equal to the limit set with -m.
 * Once finished run ./stop_share to unlink the shared memory segment
 
