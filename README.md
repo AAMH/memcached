@@ -6,13 +6,15 @@ https://github.com/memcached/memcached
 ## Dependencies
 * libevent, http://www.monkey.org/~provos/libevent/ (libevent-dev)
 * librt, in order to allow the use of POSIX shared memory
+* automake, autotools-dev, and autoconf
 
 ## Changes and Motivation
 Implemented a new mechanism that allocates from a shared pool of memory reserved only for memcached instances. This allows for a global view of memcached information and allows for future optimizations and more efficient slab allocation algorithms.
 Currently, if instances are run using -G (greedy) they will request to take memory as much as they can, ignoring the memory limit set for them when starting instances.
 
 ## How to run Memcached
-* ./autogen.sh, ./configure
+* ./autogen.sh 
+* ./configure (Edit the LIBS in generated makefile to include -lrt and add -w to CFLAGS)
 * make (make sure you have librt, libevent installed on your system)
 * Compile init_share and stop_share (i.e. gcc -o init_share init_share.c -lrt -pthread)
 * Run ./init_share XXXX (MB) with the total amount of shared memory you need.
