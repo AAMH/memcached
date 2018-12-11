@@ -25,10 +25,10 @@ For benchmarking, the data caching package provided in Cloudsuite can be used. Y
 * docker run -it --name dc-client --network="host" aamh/data-caching:client bash
 * cd usr/src/memcached/Cloudsuite-Client/memcached_client/
 * vim docker_servers.txt 
-* Edit this file to look like this:
-  127.0.0.1, 11212, 1
-  127.0.0.1, 11213, 2
-  ....
+* Edit this file to look like this:<br />
+  127.0.0.1, 11212, 1<br />
+  127.0.0.1, 11213, 2<br />
+  ....<br />
   This file should contain one line for each memcached instances you want to test. First column is the IP address(127.0.0.1 is the localhost in the client container). Second column specifies the port the server is listening to. And the last column specifies the reverse ratio of number of request sent to the instance (1 means full speed, 2 means half,..).
 * ./loader -a ../twitter_dataset/twitter_dataset_unscaled -o ../twitter_dataset/twitter_dataset_30x -s docker_servers.txt -w 4 -S 30 -D 6000 -j -T 1 -r 400000
 * If data set already exists, to warm up the servers: ./loader -a ../twitter_dataset/twitter_dataset_30x -s docker_servers.txt -w 4 -S 1 -D 6000 -j -T 1 -r 400000
