@@ -1,7 +1,9 @@
 # Memcached with Shared Memory 
 
 For the original implementation of memcached, please refer the the github link below:
-https://github.com/memcached/memcached
+https://github.com/memcached/memcached <br/><br/>
+Hillclimbing implementation is derived from Cllifhanger's github:<br/>
+https://github.com/assafein/memcached_hillclimbing
 
 ## Dependencies
 * libevent, http://www.monkey.org/~provos/libevent/ (libevent-dev)
