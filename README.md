@@ -12,7 +12,8 @@ Implemented a new mechanism that allocates from a shared pool of memory reserved
 Currently, if instances are run using -G (greedy) they will request to take memory as much as they can, ignoring the memory limit set for them when starting instances.
 
 ## How to run Memcached
-* Make (make sure you have librt, libevent installed on your system)
+* ./autogen.sh, ./configure
+* make (make sure you have librt, libevent installed on your system)
 * Compile init_share and stop_share (i.e. gcc -o init_share init_share.c -lrt -pthread)
 * Run ./init_share XXXX (MB) with the total amount of shared memory you need.
 * Run memcached instances (i.e. ./memcached -p 11212 -t 4 -m 4096 -n 550 -G).<br />
