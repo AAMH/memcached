@@ -1101,7 +1101,7 @@ static int lru_pull_tail(const int orig_id, const int cur_lru,
                     }
                     
                     
-                    shadow_item* new_shadow_it = create_shadow_item(search, orig_id);
+                    shadow_item* new_shadow_it = create_shadow_item(search, orig_id,search->nkey);
                     hv = hash(new_shadow_it->key, new_shadow_it->nkey);
                     shadow_assoc_insert(new_shadow_it, hv);
                     insert_shadowq_item(new_shadow_it,new_shadow_it->slabs_clsid);

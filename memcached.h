@@ -676,7 +676,7 @@ void append_stat(const char *name, ADD_STAT add_stats, conn *c,
 
 enum store_item_type store_item(item *item, int comm, conn *c);
 
-shadow_item* create_shadow_item(item *it,u_int8_t clsid);
+shadow_item* create_shadow_item(item *it,u_int8_t clsid,u_int8_t nkey);
 
 #if HAVE_DROP_PRIVILEGES
 extern void drop_privileges(void);
