@@ -40,6 +40,7 @@ void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid) {
     inc_shadowq_size(slabs_clsid);
 
     if (get_shadowq_size(slabs_clsid) > get_shadowq_max_items(slabs_clsid)) {
+     //   printf("Evicting ------ slabs_clsid: %d\n ",slabs_clsid);
         shadow_item *shadowq_tail = get_shadowq_tail(slabs_clsid);
         evict_shadowq_item(shadowq_tail);
     }
@@ -48,7 +49,7 @@ void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid) {
 void remove_shadowq_item(shadow_item *elem) {
     shadow_item *shadowq_tail = get_shadowq_tail(elem->slabs_clsid);
     assert(shadowq_tail);
-    if (shadowq_tail == elem)
+    if (shadowq_tail == elem && elem->prev)
         set_shadowq_tail(elem->prev, elem->slabs_clsid);
 
     shadow_item *shadowq_head = get_shadowq_head(elem->slabs_clsid);
