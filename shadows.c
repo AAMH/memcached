@@ -73,6 +73,8 @@ void evict_shadowq_item(shadow_item *elem) {
    uint32_t hv = hash(elem->key, elem->nkey);
    shadow_assoc_delete(elem->key, elem->nkey, hv);
 
-   free(elem->key);
+    char* temp = elem->key;
+   //free(elem->key);
    free(elem);
+   free(temp);
 }
