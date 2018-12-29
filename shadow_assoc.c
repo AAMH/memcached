@@ -27,8 +27,6 @@
 
 static pthread_cond_t maintenance_shadow_cond = PTHREAD_COND_INITIALIZER;
 static pthread_mutex_t maintenance_shadow_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_mutex_t temp_lock = PTHREAD_MUTEX_INITIALIZER;
-
 
 typedef  unsigned long  int  ub4;   /* unsigned 4-byte quantities */
 typedef  unsigned       char ub1;   /* unsigned 1-byte quantities */
@@ -80,8 +78,6 @@ shadow_item *shadow_assoc_find(const char *key, const size_t nkey, const uint32_
     shadow_item *it;
     unsigned int oldbucket;
 
-    mutex_lock(&temp_lock);
-
     if (expanding &&
         (oldbucket = (hv & hashmask(shadow_hashpower - 1))) >= expand_bucket)
     {
@@ -101,8 +97,6 @@ shadow_item *shadow_assoc_find(const char *key, const size_t nkey, const uint32_
         ++depth;
     }
     MEMCACHED_ASSOC_FIND(key, nkey, depth);
-    
-    mutex_unlock(&temp_lock);
     return ret;
 }
 
@@ -184,8 +178,6 @@ int shadow_assoc_insert(shadow_item *it, const uint32_t hv) {
 void shadow_assoc_delete(const char *key, const size_t nkey, const uint32_t hv) {
     shadow_item **before = _hashitem_before(key, nkey, hv);
 
-    mutex_lock(&temp_lock);
-
     if (*before) {
         shadow_item *nxt;
         hash_items--;
@@ -198,8 +190,6 @@ void shadow_assoc_delete(const char *key, const size_t nkey, const uint32_t hv) 
         *before = nxt;
         return;
     }
-    mutex_unlock(&temp_lock);
-
     /* Note:  we never actually get here.  the callers don't delete things
        they can't find. */
     assert(*before != 0);
@@ -290,7 +280,6 @@ int shadow_start_assoc_maintenance_thread() {
         }
     }
     pthread_mutex_init(&maintenance_shadow_lock, NULL);
-    pthread_mutex_init(&temp_lock, NULL);
     if ((ret = pthread_create(&maintenance_tid, NULL,
                               shadow_assoc_maintenance_thread, NULL)) != 0) {
         fprintf(stderr, "Can't create thread: %s\n", strerror(ret));
