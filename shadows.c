@@ -10,7 +10,7 @@
 
 shadow_item* create_shadow_item(item *it,u_int8_t clsid,u_int8_t nkey)
 {
-    shadow_item* shadow_it = (shadow_item*) malloc(sizeof(shadow_item));
+    shadow_item* shadow_it = (shadow_item*) malloc(sizeof(struct _shadow_item_t));
     assert(shadow_it && it);
     shadow_it->key = (char*)malloc(nkey*sizeof(char));
     memcpy(shadow_it->key, ITEM_key(it), nkey);
