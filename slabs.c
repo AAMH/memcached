@@ -610,6 +610,8 @@ static void *memory_allocate(size_t size) {
     mem_malloced += size;
     printf("total allocated mem(this): %lu\n", mem_malloced);  
     if(greedy){
+        struct tracker trck = get_tracker();
+        mem_avail = trck.max_size - trck.used_size;
         mem_limit = mem_malloced + mem_avail ;
     }
     return ret;
@@ -1190,6 +1192,8 @@ static void slab_rebalance_finish(void) {
             mem_malloced += (size_t)settings.item_size_max;
         else
             mem_malloced -= (size_t)settings.item_size_max;
+        struct tracker trck = get_tracker();     
+        mem_avail = trck.max_size - trck.used_size;
         mem_limit = mem_malloced + mem_avail ;
         printf("total allocated mem(this) : %ld\n",mem_malloced);
     }
