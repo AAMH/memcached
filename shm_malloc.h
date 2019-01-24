@@ -14,14 +14,13 @@ struct tracker {        /* Shared memory structure to keep track of current poin
 void * shm_malloc(size_t n);    // MAIN ALLOCATION FUNCTION
 void * shm_mallocAt(size_t n);  // allocates the spare slab
 
-void * get_spare_mem();         // return the spare slab and resets it
 void * set_spare_mem(void * ptr, int id);
 int    get_spare_clsid();
 
 
-bool   reset_locks();           // resets bool variables
-bool   is_spare_locked();
+bool   reset_locks();           // resets spare availability
+bool   lock_spare();
+bool   unlock_spare();
 bool   is_spare_avail();
 
 extern struct tracker get_tracker(void);    // function that each instance can use to get the most recent status of the tracker
-

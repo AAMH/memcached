@@ -148,7 +148,7 @@ void * shm_mallocAt(size_t n){
     if((ret = fstat(slabs_fd,&buffer)) < 0) {
         printf("fstat() on shared memory failed with errno %d\n", errno);
     }
-  
+    
     rptr = mmap(track->spare_mem_start , n,
         PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd, 0);
 
@@ -156,46 +156,11 @@ void * shm_mallocAt(size_t n){
         printf("mmap failed\n");
         return NULL;
     }
+    munmap(track, sizeof(struct tracker));
     close(tracker_fd);
     close(slabs_fd);
     sem_post(mutex); 
     return rptr;
-}
-
-void * get_spare_mem(){
-
-    int tracker_fd;
-    sem_t * mutex;
-    struct tracker* track;
-    void * victim;
-
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
-        perror("semaphore failed!");
-        exit(1);
-    }
-    sem_wait(mutex);
-
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
-    if (tracker_fd == -1) {
-        printf("tracker file not found!\n");
-        return NULL;
-    }
-
-    track = mmap(NULL, sizeof(struct tracker),
-        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
-    if (track == MAP_FAILED) {
-        return NULL;
-    }
-	
-    victim = track->spare_mem_start;
-    track->spare_mem_start = NULL;
-    track->spare_mem_avail = false;
-    track->spare_mem_clsid = -1;
-
-    munmap(track, sizeof(struct tracker));
-    close(tracker_fd);
-    sem_post(mutex);  
-    return victim;
 }
 
 void * set_spare_mem(void * ptr, int id){
@@ -226,7 +191,7 @@ void * set_spare_mem(void * ptr, int id){
     track->spare_mem_start = ptr;
     track->spare_mem_clsid = id;
     track->spare_mem_avail = true;
-    track->spare_lock = false;
+    //track->spare_lock = false;
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
@@ -293,7 +258,6 @@ bool is_spare_avail(){
     }
 	
     b = track->spare_mem_avail;
-    track->spare_lock = true;       // locks after the first access
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
@@ -327,7 +291,6 @@ bool reset_locks(){
     }
 	
     track->spare_mem_avail = false;
-    track->spare_lock = false;
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
@@ -335,7 +298,7 @@ bool reset_locks(){
     return b;
 }
 
-bool is_spare_locked(){
+bool lock_spare(){
 
     int tracker_fd;
     sem_t * mutex;
@@ -360,7 +323,46 @@ bool is_spare_locked(){
         return false;
     }
 	
-    b = track->spare_lock;
+    if(track->spare_lock == false){
+        track->spare_lock == true;
+        b = true;
+    }
+    else{
+        b = false; 
+    }
+
+    munmap(track, sizeof(struct tracker));
+    close(tracker_fd);
+    sem_post(mutex);  
+    return b;
+}
+
+bool unlock_spare(){
+
+    int tracker_fd;
+    sem_t * mutex;
+    struct tracker* track;
+    bool b = false;
+
+    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+        perror("semaphore failed!");
+        exit(1);
+    }
+    sem_wait(mutex);
+
+    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    if (tracker_fd == -1) {
+        printf("tracker file not found!\n");
+        return false;
+    }
+
+    track = mmap(NULL, sizeof(struct tracker),
+        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
+    if (track == MAP_FAILED) {
+        return false;
+    }
+	
+    track->spare_lock = false;
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
