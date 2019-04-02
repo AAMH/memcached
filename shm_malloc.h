@@ -1,9 +1,11 @@
 struct tracker {        /* Shared memory structure to keep track of current pointer */
     size_t max_size;
     size_t used_size;
+    size_t spare_off;
 
-    void * start_address;       // start of the shared memory
-    void * avail_address;       // address returned to tenants when asked for a slab
+    void * start;               // start of the shared memory
+    void * start_address;       // address returned to tenants when asked for a slab
+    void * avail_address;       
 
     void * spare_mem_start;     // victim slab address
     int    spare_mem_clsid;     // victim slab class

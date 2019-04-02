@@ -150,7 +150,7 @@ void * shm_mallocAt(size_t n){
     }
     
     rptr = mmap(track->spare_mem_start , n,
-        PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd, 0);
+        PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd,track->spare_off);
 
     if (rptr == MAP_FAILED) {
         printf("mmap failed\n");
@@ -188,6 +188,7 @@ void * set_spare_mem(void * ptr, int id){
         return NULL;
     }
 	
+    track->spare_off = track->start - ptr;
     track->spare_mem_start = ptr;
     track->spare_mem_clsid = id;
     track->spare_mem_avail = true;

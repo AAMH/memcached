@@ -26,10 +26,12 @@ void *thread_routine(){
 
     struct tracker trck = get_tracker();
     
+    int counter = 0;
     while(1){
         sleep(1); 
+        counter++;
         printf("\033[2J\033[1;1H");
-        printf("Used Memory: %ld\n", trck.used_size); 
+        printf("Used Memory: %ld, counter: %d\n", trck.used_size,counter); 
     }
 
     return NULL;
@@ -125,6 +127,7 @@ int main(int argc, char **argv)
     slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd, 0); 
 
     track->start_address = slab_start;
+    track->start = slab_start;
 
     if (track == MAP_FAILED) {
         perror("mapping tracker failed\n");
