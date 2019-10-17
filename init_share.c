@@ -12,15 +12,16 @@
 #include <pthread.h>
 #include "shm_malloc.c"
 
+#define n 15
 
-int tracker_fd;
-int slabs_fd;
+int tracker_fd[n];
+int slabs_fd[n];
+sem_t * mutex[n];
 
-sem_t * mutex;
+struct tracker* track[n];
+void* slab_start[n];
 
-struct tracker* track;
-void* slab_start;
-void* shadow_start;
+char tracker_name[20], semaph_name[20], slab_name[20];
 
 void *thread_routine(){
 
@@ -39,7 +40,7 @@ void *thread_routine(){
 
 int main(int argc, char **argv)
 {
-    
+
     size_t mem_allocated;
     
     /* Parse arguments */
@@ -78,69 +79,90 @@ int main(int argc, char **argv)
         exit(1);
     }
 
-    printf("memory allocated (MB): %lu\n", (long) mem_allocated/1024/1024);
-
-    
+    printf("Allocated memory for each shared-memory region(MB): %lu\n", (long) mem_allocated/1024/1024);
     
     /* Initialize Semaphore */
     
-    if ((mutex = sem_open("/semaph", O_CREAT, 0644, 1)) == SEM_FAILED) {
-    perror("semaphore initilization failed");
-    exit(1);
+    for(int i = 0;i < n;i++){
+        sprintf(semaph_name,"/semaph%d",i);
+        if ((mutex[i] = sem_open(semaph_name, O_CREAT, 0644, 1)) == SEM_FAILED) {
+            perror("semaphore initilization failed");
+            exit(1);
+        }
+        semaph_name[0] = '\n';
     }
     
     /* Initialize tracker and shared memory */
-    tracker_fd = shm_open("/tracker", O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    slabs_fd = shm_open("/slabs", O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
-    
-    if (tracker_fd == -1) {
-        perror("couldn\'t create tracker struct\n");
-        exit(1);
-    }
-    if (slabs_fd == -1) {
-        perror("couldn\'t create shared slab\n");
-        exit(1);
-    }
-    if (ftruncate(tracker_fd, sizeof(struct tracker)) == -1) {
-        perror("error truncating tracker\n");
-        exit(1);
-    }
-    if (ftruncate(slabs_fd, mem_allocated) == -1) {
-        perror("error truncating shared slab\n");
-        exit(1);
+
+    for(int i = 0;i < n;i++){
+        sprintf(tracker_name,"/tracker%d",i);
+        tracker_fd[i] = shm_open(tracker_name, O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+        tracker_name[0] = '\n';
+        
+        sprintf(slab_name,"/slabs%d",i);
+        slabs_fd[i] = shm_open(slab_name, O_TRUNC | O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+        slab_name[0] = '\n';
+
+        if (tracker_fd[i] == -1) {
+            perror("couldn\'t create tracker struct\n");
+            exit(1);
+        }
+        if (slabs_fd[i] == -1) {
+            perror("couldn\'t create shared slab\n");
+            exit(1);
+        }
+        if (ftruncate(tracker_fd[i], sizeof(struct tracker)) == -1) {
+            perror("error truncating tracker\n");
+            exit(1);
+        }
+        if (ftruncate(slabs_fd[i], mem_allocated) == -1) {
+            perror("error truncating shared slab\n");
+            exit(1);
+        }
     }
 
     /* Map shared memory tracker object */
-    track = mmap(NULL, sizeof(struct tracker),
-        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
-    
-    track->max_size = mem_allocated;
-    track->used_size = 0;
-    
-    track->spare_mem_clsid = -1;
-    track->spare_mem_start = NULL;
-    track->spare_mem_avail = false;
 
-    printf("tracking segment initialized\n");
+    for(int i = 0;i < n;i++){
+        track[i] = mmap(NULL, sizeof(struct tracker),
+            PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd[i], 0);
+        
+        track[i]->max_size = mem_allocated;
+        track[i]->used_size = 0;
+        
+        track[i]->spare_mem_clsid = -1;
+        track[i]->spare_mem_start = NULL;
+        track[i]->spare_mem_avail = false;
+
+        track[i]->min_misses = 9999999;
+        track[i]->min_id = -1;
+    }
+
+    printf("tracking segments initialized\n");
 
     /* Map shared memory slab segment */
-    slab_start = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd, 0); 
+    for(int i = 0;i < n;i++){
+        slab_start[i] = mmap(NULL, mem_allocated, PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd[i], 0); 
 
-    track->start_address = slab_start;
-    track->start = slab_start;
+        track[i]->start_address = slab_start[i];
+        track[i]->start = slab_start[i];
 
-    if (track == MAP_FAILED) {
-        perror("mapping tracker failed\n");
+        if (track[i] == MAP_FAILED) {
+            perror("mapping tracker failed\n");
+        }
+        if (slab_start[i] == MAP_FAILED) {
+            perror("mapping slab failed\n");
+        }
+    
+        printf("slab %d starts on %p\n", i, track[i]->start_address);
     }
-    if (slab_start == MAP_FAILED) {
-        perror("mapping slab failed\n");
-    }
-   
-    printf("slab starts on %p\n", track->start_address);
-    printf("shared slab initialized\n");
 
-    close(slabs_fd);
-    close(tracker_fd);
+    printf("shared slabs initialized\n");
+
+    for(int i = 0;i < n;i++){
+        close(slabs_fd[i]);
+        close(tracker_fd[i]);
+    }
 
     // pthread_t tracker_tid;
     // pthread_create(&tracker_tid, NULL, thread_routine, NULL);

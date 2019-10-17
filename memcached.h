@@ -24,6 +24,7 @@
 #include "cache.h"
 #include "logger.h"
 #include "shadow_assoc.h"
+#include "shm_malloc.h"
 
 #include "sasl_defs.h"
 
@@ -234,6 +235,7 @@ enum delta_result_type {
     X(set_cmds) \
     X(get_hits) \
     X(shadowq_hits) \
+    X(q_misses) \
     X(touch_hits) \
     X(delete_hits) \
     X(cas_hits) \

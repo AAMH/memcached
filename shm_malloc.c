@@ -27,14 +27,14 @@ void * shm_malloc(size_t n) {
     printf("page size: %lu\n", PAGESIZE); 
 
     // open semaphore
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 	
     // open tracker  
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     printf("tracker fd: %d\n",tracker_fd);    
     if (tracker_fd == -1) {
         printf("tracker file not found\n");
@@ -51,7 +51,7 @@ void * shm_malloc(size_t n) {
 //    pthread_mutex_lock(&shm_lock);
   
     // open shared slab memory region
-    slabs_fd = shm_open("/slabs", O_RDWR, S_IRUSR | S_IWUSR);
+    slabs_fd = shm_open(slab_name, O_RDWR, S_IRUSR | S_IWUSR);
     if (slabs_fd == -1) {
         return NULL;
     }
@@ -119,20 +119,20 @@ void * shm_mallocAt(size_t n){
     int ret;
 
     // open semaphore
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
   
     // open shared slab memory region
-    slabs_fd = shm_open("/slabs", O_RDWR, S_IRUSR | S_IWUSR);
+    slabs_fd = shm_open(slab_name, O_RDWR, S_IRUSR | S_IWUSR);
     if (slabs_fd == -1) {
         return NULL;
     }
 
     // open tracker  
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found\n");
         return NULL;
@@ -170,13 +170,13 @@ void * set_spare_mem(void * ptr, int id){
     struct tracker* track;
     void * victim;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return NULL;
@@ -200,20 +200,20 @@ void * set_spare_mem(void * ptr, int id){
     return victim;
 }
 
-int get_spare_clsid(){
+bool set_min_miss(long misses,int id){
 
     int tracker_fd;
     sem_t * mutex;
     struct tracker* track;
-    int victim_id = -1;
+    bool b = false;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return NULL;
@@ -225,12 +225,125 @@ int get_spare_clsid(){
         return NULL;
     }
 	
+    if(track->min_id == id)
+        b = true;
+    else if(misses < track->min_misses){
+        //printf("old misses: %ld , id: %d\n",track->min_misses, track->min_id);
+        track->min_misses = misses;
+        track->min_id = id;
+
+        //printf("misses: %ld , id: %d\n",track->min_misses, track->min_id);
+    }
+
+    munmap(track, sizeof(struct tracker));
+    close(tracker_fd);
+    sem_post(mutex);  
+    return b;
+}
+
+int get_spare_clsid(){
+
+    int tracker_fd;
+    sem_t * mutex;
+    struct tracker* track;
+    int victim_id = -1;
+
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
+        perror("semaphore failed!");
+        exit(1);
+    }
+    sem_wait(mutex);
+
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
+    if (tracker_fd == -1) {
+        printf("tracker file not found!\n");
+        return -1;
+    }
+
+    track = mmap(NULL, sizeof(struct tracker),
+        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
+    if (track == MAP_FAILED) {
+        return -1;
+    }
+	
     victim_id = track->spare_mem_clsid;
     
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
     sem_post(mutex);  
     return victim_id;
+}
+
+bool req_spare(){
+
+    int tracker_fd;
+    sem_t * mutex;
+    struct tracker* track;
+    bool b = false;
+
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
+        perror("semaphore failed!");
+        exit(1);
+    }
+    sem_wait(mutex);
+
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
+    if (tracker_fd == -1) {
+        printf("tracker file not found!\n");
+        return false;
+    }
+
+    track = mmap(NULL, sizeof(struct tracker),
+        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
+    if (track == MAP_FAILED) {
+        return false;
+    }
+	
+    if(track->spare_requested == false){
+        track->spare_requested = true;
+        b = true;
+    }
+    else{
+        b = false; 
+    }
+
+    munmap(track, sizeof(struct tracker));
+    close(tracker_fd);
+    sem_post(mutex);  
+    return b;
+}
+
+bool spare_needed(){
+
+    int tracker_fd;
+    sem_t * mutex;
+    struct tracker* track;
+    bool b = false;
+
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
+        perror("semaphore failed!");
+        exit(1);
+    }
+    sem_wait(mutex);
+
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
+    if (tracker_fd == -1) {
+        printf("tracker file not found!\n");
+        return false;
+    }
+
+    track = mmap(NULL, sizeof(struct tracker),
+        PROT_READ | PROT_WRITE, MAP_SHARED, tracker_fd, 0);
+    if (track == MAP_FAILED) {
+        return false;
+    }
+	
+    b = track->spare_requested;
+
+    munmap(track, sizeof(struct tracker));
+    close(tracker_fd);
+    sem_post(mutex);  
+    return b;
 }
 
 bool is_spare_avail(){
@@ -240,13 +353,13 @@ bool is_spare_avail(){
     struct tracker* track;
     bool b = false;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return false;
@@ -273,13 +386,13 @@ bool reset_locks(){
     struct tracker* track;
     bool b = false;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return false;
@@ -292,6 +405,9 @@ bool reset_locks(){
     }
 	
     track->spare_mem_avail = false;
+    track->spare_requested = false;
+    track->min_misses = 99999999;
+    track->min_id = -1;
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
@@ -306,13 +422,13 @@ bool lock_spare(){
     struct tracker* track;
     bool b = false;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return false;
@@ -325,7 +441,7 @@ bool lock_spare(){
     }
 	
     if(track->spare_lock == false){
-        track->spare_lock == true;
+        track->spare_lock = true;
         b = true;
     }
     else{
@@ -345,13 +461,13 @@ bool unlock_spare(){
     struct tracker* track;
     bool b = false;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return false;
@@ -378,13 +494,13 @@ struct tracker get_tracker(void) {
     struct tracker* track;
     struct tracker track2;
 
-    if ((mutex = sem_open("/semaph", 0)) == SEM_FAILED) {
+    if ((mutex = sem_open(semaph_name, 0)) == SEM_FAILED) {
         perror("semaphore failed!");
         exit(1);
     }
     sem_wait(mutex);
 
-    tracker_fd = shm_open("/tracker",  O_RDWR, S_IRUSR | S_IWUSR);
+    tracker_fd = shm_open(tracker_name,  O_RDWR, S_IRUSR | S_IWUSR);
     if (tracker_fd == -1) {
         printf("tracker file not found!\n");
         return track2;
@@ -401,4 +517,11 @@ struct tracker get_tracker(void) {
     close(tracker_fd);
     sem_post(mutex);  
     return track2;
+}
+
+void init_shared_names(int x) {
+    int y = (x - 11212) / 4;
+    sprintf(semaph_name,"/semaph%d",y); 
+    sprintf(tracker_name,"/tracker%d",y); 
+    sprintf(slab_name,"/slabs%d",y); 
 }

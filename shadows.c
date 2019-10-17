@@ -5,12 +5,11 @@
 #include <stddef.h>
 #include <stdio.h>
 #include <string.h>
-#include "shm_malloc.h"
 
 
 shadow_item* create_shadow_item(item *it,u_int8_t clsid,u_int8_t nkey)
 {
-    shadow_item* shadow_it = (shadow_item*) malloc(sizeof(struct _shadow_item_t));
+    shadow_item* shadow_it = (shadow_item*) malloc(sizeof(shadow_item));
     memset(shadow_it,0,sizeof(struct _shadow_item_t));
     assert(shadow_it && it);
     shadow_it->key = (char*)malloc(nkey*sizeof(char));
@@ -41,7 +40,7 @@ void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid) {
     inc_shadowq_size(slabs_clsid);
 
     if (get_shadowq_size(slabs_clsid) > get_shadowq_max_items(slabs_clsid)) {
-     //   printf("Evicting ------ slabs_clsid: %d\n ",slabs_clsid);
+        printf("Evicting ------ slabs_clsid: %d\n ",slabs_clsid);
         shadow_item *shadowq_tail = get_shadowq_tail(slabs_clsid);
         evict_shadowq_item(shadowq_tail);
     }
@@ -74,6 +73,23 @@ void evict_shadowq_item(shadow_item *elem) {
    uint32_t hv = hash(elem->key, elem->nkey);
    shadow_assoc_delete(elem->key, elem->nkey, hv);
 
-   //free(elem->key);
-   free(elem);
+//   free(elem->key);
+//   free(elem);
+}
+
+bool is_valid(shadow_item *elem, int perslab){
+    shadow_item *shadowq_tail = get_shadowq_tail(elem->slabs_clsid);
+    shadow_item *shadowq_head = get_shadowq_head(elem->slabs_clsid);
+    shadow_item *elem2 = shadowq_head;
+
+    for(int i = 0;i < perslab;i++){
+        if(elem2 == elem)
+            return true;
+        else if(elem2 == shadowq_tail || elem2 == NULL)
+            return false;
+        else
+            elem2 = elem2->next;
+    }
+
+    return false;
 }

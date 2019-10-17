@@ -8,9 +8,23 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#define n 15
+
+char tracker_name[20], semaph_name[20], slab_name[20];
+
 int main () {
-    shm_unlink("/slabs");
-    shm_unlink("/tracker");
-    shm_unlink("/semaph");
-    shm_unlink("/shadow");
+
+    for(int i = 0;i < n;i++){
+        sprintf(tracker_name,"/tracker%d",i);
+        shm_unlink(tracker_name);
+        tracker_name[0] = '\n';
+
+        sprintf(slab_name,"/slabs%d",i);
+        shm_unlink(slab_name);
+        slab_name[0] = '\n';
+
+        sprintf(semaph_name,"/semaph%d",i);
+        shm_unlink(semaph_name);
+        semaph_name[0] = '\n';
+    }
 }

@@ -80,6 +80,7 @@ static enum try_read_result try_read_udp(conn *c);
 
 static void conn_set_state(conn *c, enum conn_states state);
 static int start_conn_timeout_thread();
+static int start_file_write_thread();
 
 /* stats */
 static void stats_init(void);
@@ -226,7 +227,7 @@ static void settings_init(void) {
     settings.backlog = 1024;
     settings.binding_protocol = negotiating_prot;
     settings.item_size_max = 1024 * 1024; /* The famous 1MB upper limit. */
-    settings.shadowq_size = 1024 * 1024; /* 1MB */
+    settings.shadowq_size = 100 * 1024 * 1024; /* 4000 * 1MB */
     settings.slab_page_size = 1024 * 1024; /* chunks are split from 1MB pages. */
     settings.slab_chunk_size_max = settings.slab_page_size;
     settings.isGreedy = false;
@@ -380,6 +381,70 @@ static int start_conn_timeout_thread() {
     if ((ret = pthread_create(&conn_timeout_tid, NULL,
         conn_timeout_thread, NULL)) != 0) {
         fprintf(stderr, "Can't create idle connection timeout thread: %s\n",
+            strerror(ret));
+        return -1;
+    }
+
+    return 0;
+}
+
+/* Thread for writing a few stats to a file */
+
+static pthread_t file_write_tid;
+
+static void *file_write_thread(void *arg) {
+    
+    int sleep_time = 1;
+    
+    char file_path_hit[100],file_path_memory[100];
+    mkdir("Log",0755);
+    mkdir("Log/HitRatio",0755);
+    mkdir("Log/Memory",0755);
+    sprintf(file_path_hit,"Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
+    sprintf(file_path_memory,"Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+
+    // mkdir("/home/aseyri2/Log",0755);
+    // mkdir("/home/aseyri2/Log/HitRatio",0755);
+    // mkdir("/home/aseyri2/Log/Memory",0755);
+    // sprintf(file_path_hit,"/home/aseyri2/Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
+    // sprintf(file_path_memory,"/home/aseyri2/Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+    
+    FILE *f = fopen(file_path_hit,"w");
+    FILE *f2 = fopen(file_path_memory,"w");
+
+    fprintf(f,"total,class_2,class_3,class_4,class_5,class_6,class_7,class_8,class_9\n");
+    fprintf(f2,"total,class_2,class_3,class_4,class_5,class_6,class_7,class_8,class_9\n");
+
+    struct thread_stats thread_stats;
+    struct slab_stats slab_stats;
+
+    while(1) {
+       
+        sleep(sleep_time);
+
+        threadlocal_stats_aggregate(&thread_stats);
+        slab_stats_aggregate(&thread_stats, &slab_stats);
+
+        if(thread_stats.get_cmds)
+            fprintf(f,"%.2f,",(double)slab_stats.get_hits / (double)thread_stats.get_cmds * 100);
+        
+        slabs_stats_file_write(f,f2,thread_stats);
+        
+        fflush(f);
+        fflush(f2);
+    }
+    
+    fclose(f);
+    fclose(f2);
+    return NULL;
+}
+
+static int start_file_write_thread() {
+    int ret;
+
+    if ((ret = pthread_create(&file_write_tid, NULL,
+        file_write_thread, NULL)) != 0) {
+        fprintf(stderr, "Can't create file write thread: %s\n",
             strerror(ret));
         return -1;
     }
@@ -1559,12 +1624,13 @@ static void process_bin_get_or_touch(conn *c) {
             c->thread->stats.get_misses++;
         }
         pthread_mutex_unlock(&c->thread->stats.mutex);
-
+        
         shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments
 
-        if (shadow_it)
+        if (shadow_it){
              c->thread->stats.slab_stats[shadow_it->slabs_clsid].shadowq_hits++;
-
+             c->thread->stats.slab_stats[shadow_it->slabs_clsid].q_misses++;
+        }
         if (should_touch) {
             MEMCACHED_COMMAND_TOUCH(c->sfd, key, nkey, -1, 0);
         } else {
@@ -3412,9 +3478,10 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 c->thread->stats.get_cmds++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
                 shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments 
-                if (shadow_it)
+                if (shadow_it){
                     c->thread->stats.slab_stats[shadow_it->slabs_clsid].shadowq_hits++;
-
+                    c->thread->stats.slab_stats[shadow_it->slabs_clsid].q_misses++;
+                }
 
                 MEMCACHED_COMMAND_GET(c->sfd, key, nkey, -1, 0);
             }
@@ -4039,6 +4106,10 @@ static void process_command(conn *c, char *command) {
     } else if (ntokens >= 2 && (strcmp(tokens[COMMAND_TOKEN].value, "stats") == 0)) {
 
         process_stat(c, tokens, ntokens);
+
+    } else if (ntokens >= 2 && (strcmp(tokens[COMMAND_TOKEN].value, "reassign") == 0)) {
+
+        force_reassign(atoi(tokens[SUBCOMMAND_TOKEN].value));
 
     } else if (ntokens >= 2 && ntokens <= 4 && (strcmp(tokens[COMMAND_TOKEN].value, "flush_all") == 0)) {
         time_t exptime = 0;
@@ -6002,6 +6073,7 @@ int main (int argc, char **argv) {
         case 'p':
             settings.port = atoi(optarg);
             tcp_specified = true;
+            init_shared_names(settings.port);
             break;
         case 's':
             settings.socketpath = optarg;
@@ -6616,6 +6688,10 @@ int main (int argc, char **argv) {
 
     if (settings.idle_timeout && start_conn_timeout_thread() == -1) {
         exit(EXIT_FAILURE);
+    }
+    
+    if (start_file_write_thread() == -1){
+         exit(EXIT_FAILURE);
     }
 
     if (start_slab_rebalance_thread() == -1) {

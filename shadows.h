@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdbool.h>
 #define SHADOWQ_HIT_THRESHOLD 256
 
 typedef struct _shadow_item_t {
@@ -14,3 +15,4 @@ void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid);
 void remove_shadowq_item(shadow_item *elem);
 void evict_shadowq_item(shadow_item *shadowq_it);
 
+bool is_valid(shadow_item *elem, int perslab);

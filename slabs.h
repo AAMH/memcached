@@ -71,5 +71,6 @@ void dec_shadowq_size(unsigned int id);
 void inc_shadowq_size(unsigned int id);
 
 void force_release(void);
+void checkForSpare(void);
 
 #endif
