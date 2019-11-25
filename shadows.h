@@ -15,4 +15,4 @@ void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid);
 void remove_shadowq_item(shadow_item *elem);
 void evict_shadowq_item(shadow_item *shadowq_it);
 
-bool is_valid(shadow_item *elem, int perslab);
+int get_page_id(shadow_item *elem, int perslab);

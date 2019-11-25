@@ -1625,12 +1625,12 @@ static void process_bin_get_or_touch(conn *c) {
         }
         pthread_mutex_unlock(&c->thread->stats.mutex);
         
-        shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments
+       /* shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments
 
         if (shadow_it){
              c->thread->stats.slab_stats[shadow_it->slabs_clsid].shadowq_hits++;
              c->thread->stats.slab_stats[shadow_it->slabs_clsid].q_misses++;
-        }
+        }*/
         if (should_touch) {
             MEMCACHED_COMMAND_TOUCH(c->sfd, key, nkey, -1, 0);
         } else {
@@ -3477,12 +3477,12 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 c->thread->stats.get_misses++;
                 c->thread->stats.get_cmds++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
-                shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments 
+            /*    shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments 
                 if (shadow_it){
                     c->thread->stats.slab_stats[shadow_it->slabs_clsid].shadowq_hits++;
                     c->thread->stats.slab_stats[shadow_it->slabs_clsid].q_misses++;
                 }
-
+*/
                 MEMCACHED_COMMAND_GET(c->sfd, key, nkey, -1, 0);
             }
 

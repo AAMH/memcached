@@ -1546,8 +1546,9 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
     uint32_t hv = hash(key, nkey);
     shadow_item* shadow_it = shadow_assoc_find(key, nkey, hv);
 
-    if (shadow_it && is_valid(shadow_it,slabclass[shadow_it->slabs_clsid].perslab)) {
-    
+    if (shadow_it) {
+        int x = get_page_id(shadow_it,slabclass[shadow_it->slabs_clsid].perslab);       
+
         if(spare_needed()){ // Someone needs a page, we should release one!
         checkForSpare();
         /* 

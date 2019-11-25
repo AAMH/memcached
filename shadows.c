@@ -77,19 +77,19 @@ void evict_shadowq_item(shadow_item *elem) {
 //   free(elem);
 }
 
-bool is_valid(shadow_item *elem, int perslab){
+int get_page_id(shadow_item *elem, int perslab){
     shadow_item *shadowq_tail = get_shadowq_tail(elem->slabs_clsid);
     shadow_item *shadowq_head = get_shadowq_head(elem->slabs_clsid);
     shadow_item *elem2 = shadowq_head;
 
-    for(int i = 0;i < perslab;i++){
+    int counter = 1;
+
+    while(elem2 != shadowq_tail && elem2 != NULL){
         if(elem2 == elem)
-            return true;
-        else if(elem2 == shadowq_tail || elem2 == NULL)
-            return false;
-        else
-            elem2 = elem2->next;
+            return (counter/perslab);
+        elem2 = elem2->next;
+        counter++;
     }
 
-    return false;
+    return -1;
 }
