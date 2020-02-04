@@ -81,6 +81,7 @@ static enum try_read_result try_read_udp(conn *c);
 static void conn_set_state(conn *c, enum conn_states state);
 static int start_conn_timeout_thread();
 static int start_file_write_thread();
+static int start_marginal_utility_thread();
 
 /* stats */
 static void stats_init(void);
@@ -227,7 +228,7 @@ static void settings_init(void) {
     settings.backlog = 1024;
     settings.binding_protocol = negotiating_prot;
     settings.item_size_max = 1024 * 1024; /* The famous 1MB upper limit. */
-    settings.shadowq_size = 100 * 1024 * 1024; /* 4000 * 1MB */
+    settings.shadowq_size = 1000 * 1024 * 1024; /* 1000 * 1MB */
     settings.slab_page_size = 1024 * 1024; /* chunks are split from 1MB pages. */
     settings.slab_chunk_size_max = settings.slab_page_size;
     settings.isGreedy = false;
@@ -452,6 +453,37 @@ static int start_file_write_thread() {
     return 0;
 }
 
+/* Thread for calculating marginal utilities */
+
+static pthread_t marginal_utility_tid;
+
+static void *marginal_utility_thread(void *arg) {
+    
+    int sleep_time = 1;
+
+    while(1) {
+       
+        sleep(sleep_time);
+        
+        find_highest_mu();
+
+    }
+    
+    return NULL;
+}
+
+static int start_marginal_utility_thread() {
+    int ret;
+
+    if ((ret = pthread_create(&marginal_utility_tid, NULL,
+        marginal_utility_thread, NULL)) != 0) {
+        fprintf(stderr, "Can't create marginal_utility thread: %s\n",
+            strerror(ret));
+        return -1;
+    }
+
+    return 0;
+}
 /*
  * Initializes the connections array. We don't actually allocate connection
  * structures until they're needed, so as to avoid wasting memory when the
@@ -1568,6 +1600,7 @@ static void process_bin_get_or_touch(conn *c) {
         } else {
             c->thread->stats.get_cmds++;
             c->thread->stats.slab_stats[ITEM_clsid(it)].get_hits++;
+            incr_slab_hits(ITEM_clsid(it),it->page_id);
         }
         pthread_mutex_unlock(&c->thread->stats.mutex);
         
@@ -1625,12 +1658,12 @@ static void process_bin_get_or_touch(conn *c) {
         }
         pthread_mutex_unlock(&c->thread->stats.mutex);
         
-       /* shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments
+        shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments
 
         if (shadow_it){
              c->thread->stats.slab_stats[shadow_it->slabs_clsid].shadowq_hits++;
              c->thread->stats.slab_stats[shadow_it->slabs_clsid].q_misses++;
-        }*/
+        }
         if (should_touch) {
             MEMCACHED_COMMAND_TOUCH(c->sfd, key, nkey, -1, 0);
         } else {
@@ -3469,6 +3502,7 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 c->thread->stats.slab_stats[ITEM_clsid(it)].get_hits++;
                 c->thread->stats.get_cmds++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
+                incr_slab_hits(ITEM_clsid(it),it->page_id);
                 *(c->ilist + i) = it;
                 i++;
 
@@ -3477,12 +3511,12 @@ static inline void process_get_command(conn *c, token_t *tokens, size_t ntokens,
                 c->thread->stats.get_misses++;
                 c->thread->stats.get_cmds++;
                 pthread_mutex_unlock(&c->thread->stats.mutex);
-            /*    shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments 
+                shadow_item* shadow_it = slabs_shadowq_lookup(key,nkey); //FIXME - redundat lookup, delete in overhead measurments 
                 if (shadow_it){
                     c->thread->stats.slab_stats[shadow_it->slabs_clsid].shadowq_hits++;
                     c->thread->stats.slab_stats[shadow_it->slabs_clsid].q_misses++;
                 }
-*/
+
                 MEMCACHED_COMMAND_GET(c->sfd, key, nkey, -1, 0);
             }
 
@@ -6691,11 +6725,15 @@ int main (int argc, char **argv) {
     }
     
     if (start_file_write_thread() == -1){
-         exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
+    }
+
+    if (start_marginal_utility_thread() == -1){
+       exit(EXIT_FAILURE);
     }
 
     if (start_slab_rebalance_thread() == -1) {
-         exit(EXIT_FAILURE);
+        exit(EXIT_FAILURE);
      }
 
     /* initialise clock event */

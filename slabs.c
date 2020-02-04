@@ -37,13 +37,17 @@ typedef struct {
 
     size_t requested; /* The number of requested bytes */
 
+    uint32_t hits[1000];
+
 /*** shadow queue Additions ***/
     shadow_item *shadowq_head;
     shadow_item *shadowq_tail;
     unsigned int shadowq_size;
-    int shadowq_hits;
-    long q_misses;
     uint32_t shadowq_max_items;
+    uint32_t shadowq_hits[1000];
+    //uint32_t shadowq_hits;
+    uint32_t q_misses;
+    shadow_item **shadow_page_list;
 } slabclass_t;
 
 static slabclass_t slabclass[MAX_NUMBER_OF_SLAB_CLASSES];
@@ -68,14 +72,17 @@ static pthread_mutex_t slabs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t slabs_rebalance_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
-
 static bool rebal_source_ext = false;       // indicating if reassigning is being used to take memory from an external source
 static bool rebal_dest_ext = false;         // indicating if reassigning is being used to give memory to an external destination
 static bool is_taken_careof = false;
 static int check_counter = 0;
-
+static int pages_to_request = -1;
+static int pages_to_release = -1;
+static int slab_to_release = -1;
 
 void checkForSpare();
+void waitForSpare();
+void update_shadow_page_list(int id, int pageN, bool is_increasing, shadow_item *elem);
 /*
  * Forward Declarations
  */
@@ -156,9 +163,8 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
         slabclass[i].size = size;
         slabclass[i].perslab = settings.slab_page_size / slabclass[i].size;
         slabclass[i].shadowq_max_items = settings.shadowq_size / slabclass[i].size;
-	    if(i >= 3 && i <= 7)
-            slabclass[i].shadowq_max_items = 40 * settings.shadowq_size / slabclass[i].size;
         printf("shadowq_max_items: queue %d, slab_size %d, perslab %d, shadowq_size %d\n",i,size,slabclass[i].perslab, slabclass[i].shadowq_max_items);
+        slabclass[i].shadow_page_list = (shadow_item**) malloc(1000*sizeof(shadow_item*));
 
         if (slab_sizes == NULL)
             size *= factor;
@@ -230,6 +236,7 @@ static void split_slab_page_into_freelist(char *ptr, const unsigned int id) {
     int x;
     for (x = 0; x < p->perslab; x++) {
         do_slabs_free(ptr, 0, id);
+        ((item *)ptr)->page_id = p->slabs;
         ptr += p->size;
     }
 }
@@ -461,7 +468,8 @@ bool get_stats(const char *stat_type, int nkey, ADD_STAT add_stats, void *c) {
 static void do_slabs_stats(ADD_STAT add_stats, void *c) {
     int i, total;
 
-    checkForSpare();
+     //if(!is_spare_avail())
+       // checkForSpare();
     /* Get the per-thread stats which contain some interesting aggregates */
     struct thread_stats thread_stats;
     threadlocal_stats_aggregate(&thread_stats);
@@ -774,6 +782,8 @@ static int slab_rebalance_start(void) {
         }
     s_cls = &slabclass[slab_rebal.s_clsid];
 
+    if(rebal_source_ext && s_cls->slabs == 0)
+        s_cls = &slabclass[slab_rebal.d_clsid];
 
     if (no_go != 0) {
         pthread_mutex_unlock(&slabs_lock);
@@ -783,7 +793,11 @@ static int slab_rebalance_start(void) {
     /* Always kill the first available slab page as it is most likely to
         * contain the oldest items
         */
-    slab_rebal.slab_start = s_cls->slab_list[0];
+    if(rebal_dest_ext)
+        slab_rebal.slab_start = s_cls->slab_list[slab_to_release];
+    else
+        slab_rebal.slab_start = s_cls->slab_list[0];
+
     slab_rebal.slab_end   = (char *)slab_rebal.slab_start +
         (s_cls->size * s_cls->perslab);
     slab_rebal.slab_pos   = slab_rebal.slab_start;
@@ -1136,10 +1150,14 @@ static void slab_rebalance_finish(void) {
     void * pp = NULL;
     if(!rebal_source_ext){      // No need to do this when we are in receiver side of reassigning
         s_cls->slabs--;
-        pp = s_cls->slab_list[0];
-        for (x = 0; x < s_cls->slabs; x++) {
-            s_cls->slab_list[x] = s_cls->slab_list[x+1];
+        pp = s_cls->slab_list[slab_to_release];
+        for (x = slab_to_release; x < s_cls->slabs; x++) {
+            s_cls->slab_list[x] = s_cls->slab_list[x + 1];
+            s_cls->hits[x] = s_cls->hits[x + 1];
         }
+        s_cls->slab_list[s_cls->slabs] = NULL;
+        s_cls->hits[s_cls->slabs] = 0;
+
         if(rebal_dest_ext){
             set_spare_mem(pp,slab_rebal.s_clsid);
             printf("    address: %p \n",pp);
@@ -1186,7 +1204,6 @@ static void slab_rebalance_finish(void) {
 
     slab_rebal.done       = 0;
     slab_rebal.s_clsid    = 0;
-    slab_rebal.d_clsid    = 0;
     slab_rebal.slab_start = NULL;
     slab_rebal.slab_end   = NULL;
     slab_rebal.slab_pos   = NULL;
@@ -1199,11 +1216,17 @@ static void slab_rebalance_finish(void) {
     slab_rebal.rescues  = 0;
 
 
-    if(rebal_source_ext)
+    if(rebal_source_ext){
         reset_locks();
+        slab_rebalance_signal = 10;
+    }
+    else{
+        slab_to_release = -1;
+        slab_rebalance_signal = 0;
+        slab_rebal.d_clsid    = 0;
+    }
     rebal_source_ext = false;
     rebal_dest_ext = false;
-    slab_rebalance_signal = 0;
 
     pthread_mutex_unlock(&slabs_lock);
 
@@ -1219,21 +1242,6 @@ static void slab_rebalance_finish(void) {
     if (settings.verbose > 1) {
         fprintf(stderr, "finished a slab move\n");
     }
-}
-
-static void waitForSpare(){ // wait for a fresh page
-
-    if(is_spare_avail()){
-        lock_spare();
-        slab_rebal.s_clsid = get_spare_clsid();
-        rebal_source_ext = true;
-        rebal_dest_ext   = false;
-        is_taken_careof  = false;
-        //printf("Found external page from class:  %d\n", slab_rebal.s_clsid);    
-        slab_rebalance_signal = 1;
-    }
-    //checkForSpare();
-
 }
 
 /* Slab mover thread.
@@ -1433,8 +1441,6 @@ void slabs_stats_file_write(FILE *f, FILE *f2,struct thread_stats thread_stats){
     bool b = false;
     unsigned long long total_req = 0;
 
-    checkForSpare(); // ??????
-
     threadlocal_stats_aggregate(&thread_stats);
 
     if(thread_stats.slab_stats[5].get_hits != 0)
@@ -1477,15 +1483,15 @@ void force_reassign(int d){
     do_slabs_reassign(prev_victim,d);
 }
 
-int find_victim(){
+int find_victim_slab(){
 
     int min_hit = 1000000;
     int min_id = 0;
 
     for(int i = POWER_SMALLEST;i <= power_largest;i++){
-        if(slabclass[i].slabs >= 2 && slabclass[i].shadowq_hits >= 0)
-            if(slabclass[i].shadowq_hits < min_hit){
-                min_hit = slabclass[i].shadowq_hits;
+        if(slabclass[i].slabs >= 2 && slabclass[i].q_misses >= 0)
+            if(slabclass[i].q_misses < min_hit){
+                min_hit = slabclass[i].q_misses;
                 min_id = i;
             }
     }
@@ -1493,16 +1499,41 @@ int find_victim(){
     return min_id;
 }
 
+void waitForSpare(){ // wait for a fresh page
+
+    if(pages_to_request == 0){
+        slab_rebalance_signal = 0;  
+        rebal_source_ext = false;
+        rebal_dest_ext   = false;  
+    }
+    else
+    {
+        if(is_spare_avail()){
+            lock_spare();
+            pages_to_request--;
+            printf("\nExternal REASSIGN: Received 1 page(s) for class %d, Needs %d more\n", slab_rebal.d_clsid,pages_to_request);
+            slab_rebal.s_clsid = get_spare_clsid();
+            rebal_source_ext = true;
+            rebal_dest_ext   = false;
+            is_taken_careof  = false;    
+            slab_rebalance_signal = 1;
+        }
+        else
+            req_spare();
+    }
+
+}
+
 void checkForSpare(){
 
     long total_shadowq_hits = 0;
 
     if(spare_needed()){ // Someone needs a page, we should release one!
-        if((slab_rebalance_signal == 0 /*|| slab_rebalance_signal == 10*/)/* && lock_spare()*/ && !rebal_dest_ext){
+        if((slab_rebalance_signal == 0 /*|| slab_rebalance_signal == 10*/)/* && lock_spare()*/){
 
             for(int i = POWER_SMALLEST;i <= power_largest;i++){
-                if(slabclass[i].slabs > 0 && slabclass[i].shadowq_hits > 0)
-                    total_shadowq_hits += slabclass[i].shadowq_hits;
+                if(slabclass[i].slabs > 0 && slabclass[i].shadowq_hits[0] > 0)
+                    total_shadowq_hits += slabclass[i].shadowq_hits[0];
             }
             if(set_min_miss(total_shadowq_hits,settings.port)) // found his id as the candidate
                 check_counter++;
@@ -1517,26 +1548,96 @@ void checkForSpare(){
                 check_counter = 0;
                 is_taken_careof = false;
 		
-                if(slab_rebalance_signal == 0) {
-			rebal_dest_ext  = true;
-			int counter = 0; //make sure we are not stuck in case there are no more slabs left
-                do {
-                    if (counter++ > power_largest - POWER_SMALLEST + 1)
+                if(slab_rebalance_signal == 0){
+                    rebal_dest_ext  = true;
+                    prev_victim = find_victim_slab();
+                    printf("\nExternal REASSIGN: Releasing Memory from class %d\n", prev_victim);
+                    do_slabs_reassign(prev_victim,-2);  // -2 means it's located in another tenant
+        	    }    
+	        }
+        }
+    }
+}
+
+void find_lowest_mu(){
+
+    double lowest_mu = 1000000,mu = 0;
+    int temp = 0,cls_id = 0,page_id = -1;
+
+
+    if(spare_needed()){
+        for(int i = POWER_SMALLEST;i <= power_largest;i++)
+            if(slabclass[i].slabs > 10)
+                for(int j = 0;j <= slabclass[i].slabs - 10;j++){
+                    //printf("page %d : %d\n",j,slabclass[5].shadowq_hits[j]);
+                    if(slabclass[i].hits[j] == 0){
+                        cls_id = i;
+                        page_id = j;
                         break;
-                    prev_victim = ((prev_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
-                } while ((slabclass[prev_victim].slabs <= 1)); // slab class 5 as the source led to strange behaviour, should be taken care of later
+                    }
+                    else{
+                        // temp = 0;
+                        // for(int k = j;k >= 0;k--)
+                        //     temp += slabclass[i].hits[k];
+                        // mu = (double) temp / (j+1);
+                        if(slabclass[i].hits[j] < lowest_mu){
+                            lowest_mu = slabclass[i].hits[j];
+                            cls_id = i;
+                            page_id = j;
+                        }
+                    }
+                }
+
+        if(cls_id != 0 && page_id != -1 && slab_rebalance_signal == 0 && lock_spare()){
+            is_taken_careof = false;
+            rebal_dest_ext  = true;
+            slab_to_release = page_id;
+            printf("\nExternal REASSIGN: Releasing Memory from class %d (slab %d)\n", cls_id, page_id);
+            do_slabs_reassign(cls_id,-2);  // -2 means it's located in another tenant
+        }   
+        
+    }
+    
+}
+
+void find_highest_mu(){
+
+    double highest_mu = 0,mu = 0;
+    int temp = 0,cls_id = 0,shadow_page_id = -1;
 
 
-                printf("\nExternal REASSIGN: Releasing Memory from class %d\n", prev_victim);
-                do_slabs_reassign(prev_victim,-2);  // -2 means it's located in another tenant
-        	}    
-		/*else if(slab_rebalance_signal == 10){
-                        slab_rebalance_signal = 0;
-                        unlock_spare();
-			reset_locks();
-                        force_reassign(slab_rebal.d_clsid);
-                }*/
-	    }
+    if(slab_rebalance_signal == 0){
+
+        if(!is_spare_avail())
+            //checkForSpare();
+            find_lowest_mu();
+
+        for(int i = POWER_SMALLEST;i <= power_largest;i++)
+            if(slabclass[i].slabs > 0)
+                for(int j = 999;j >= 0;j--){
+                    //printf("page %d : %d\n",j,slabclass[5].shadowq_hits[j]);
+                    if(slabclass[i].shadowq_hits[j] > SHADOWQ_HIT_THRESHOLD){
+                        temp = 0;
+                        for(int k = j;k >= 0;k--)
+                            temp += slabclass[i].shadowq_hits[k];
+                        mu = (double) temp / (j+1);
+                        if(mu > highest_mu){
+                            highest_mu = mu;
+                            cls_id = i;
+                            shadow_page_id = j;
+                        }
+                    }
+                }
+
+        if(cls_id != 0 && shadow_page_id != -1 && req_spare()){
+            
+            for(int k = shadow_page_id;k >= 0;k--)
+                slabclass[cls_id].shadowq_hits[k] = 0;
+            
+            pages_to_request = shadow_page_id + 1;
+            printf("\nExternal REASSIGN: Requested %d page(s) for class %d\n",pages_to_request, cls_id);
+            do_slabs_reassign(1000,cls_id);
+
         }
     }
 }
@@ -1546,27 +1647,24 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
     uint32_t hv = hash(key, nkey);
     shadow_item* shadow_it = shadow_assoc_find(key, nkey, hv);
 
-    if (shadow_it) {
-        int x = get_page_id(shadow_it,slabclass[shadow_it->slabs_clsid].perslab);       
+    if (shadow_it){   
+        int x = shadow_it->page;
+        
+        //move to head
+        remove_shadowq_item(shadow_it);
+        insert_shadowq_item(shadow_it, shadow_it->slabs_clsid);
 
-        if(spare_needed()){ // Someone needs a page, we should release one!
-        checkForSpare();
-        /* 
-            if(slab_rebalance_signal == 0 && lock_spare() && !rebal_dest_ext){
-                //printf("\nspare is needed. Releasing..\n");
-                rebal_dest_ext  = true;
-                is_taken_careof = false;
-                int counter = 0; //make sure we are not stuck in case there are no more slabs left
-                do {
-                    if (counter++ > power_largest - POWER_SMALLEST + 1)
-                        break;
-                    prev_victim = ((prev_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
-                } while ((slabclass[prev_victim].slabs <= 1)); // slab class 5 as the source led to strange behaviour, should be taken care of later
-                            
-                printf("\nExternal REASSIGN: Releasing Memory from class %d\n", prev_victim);
-                do_slabs_reassign(prev_victim,-2);  // -2 means it's located in another tenant
-            }*/
-        }
+        //update shadowq hit counters
+        do {
+            slab_shadowq_dec_victim = ((slab_shadowq_dec_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
+        } while (slab_shadowq_dec_victim == shadow_it->slabs_clsid);
+        //slabclass[slab_shadowq_dec_victim].shadowq_hits--;
+        slabclass[shadow_it->slabs_clsid].shadowq_hits[x]++;
+        slabclass[shadow_it->slabs_clsid].q_misses++;
+
+    }
+/*    //uncomment for ONLY local reallocation
+    if (shadow_it) {
         
         //move to head
         remove_shadowq_item(shadow_it);
@@ -1583,13 +1681,13 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
         //Slab rebalance
         if ((slabclass[shadow_it->slabs_clsid].shadowq_hits) > SHADOWQ_HIT_THRESHOLD) {
             
-            if(slab_rebalance_signal == 0){
-                if(req_spare()){    // Request a page
-                    printf("\nExternal REASSIGN: Requested memory for class %d\n", shadow_it->slabs_clsid);
-                    slabclass[shadow_it->slabs_clsid].shadowq_hits = 0; 
-                    do_slabs_reassign(1000,shadow_it->slabs_clsid);
-                }
-                else{   //  Failed to request a page for some reason, use your own slabs        
+            // if(slab_rebalance_signal == 0){
+            //     if(req_spare()){    // Request a page
+            //         printf("\nExternal REASSIGN: Requested memory for class %d\n", shadow_it->slabs_clsid);
+            //         slabclass[shadow_it->slabs_clsid].shadowq_hits = 0; 
+            //         do_slabs_reassign(1000,shadow_it->slabs_clsid);
+            //     }
+            //     else{   //  Failed to request a page for some reason, use your own slabs        
                     rebal_source_ext = false; 
                     rebal_dest_ext   = false;
                     int counter = 0; //make sure we are not stuck in case there are no more slabs left
@@ -1602,18 +1700,61 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
                     printf("\nInternal REASSIGN: class %d  TO  class %d\n", prev_victim, shadow_it->slabs_clsid);
                     slabclass[shadow_it->slabs_clsid].shadowq_hits = 0; 
                     do_slabs_reassign(prev_victim,shadow_it->slabs_clsid);
-                }
-            }
+                // }
+            // }
         }
     }
-    else if(shadow_it && !is_valid(shadow_it,slabclass[shadow_it->slabs_clsid].perslab)){
-        slabclass[shadow_it->slabs_clsid].q_misses++;
-        //move to head
-        // remove_shadowq_item(shadow_it);
-        // insert_shadowq_item(shadow_it, shadow_it->slabs_clsid);
+*/
+    return shadow_it;
+}
+
+void update_shadow_page_list(int id, int pageN, bool inserting, shadow_item *elem){
+    slabclass_t *p = &slabclass[id];
+    pthread_mutex_lock(&shadow_lock);
+
+    if(inserting){
+        p->shadow_page_list[0] = get_shadowq_head(id);
+
+        for(int i = 1;i <= p->shadowq_size / p->perslab;i++){
+            if(p->shadow_page_list[i]){
+                p->shadow_page_list[i] = p->shadow_page_list[i]->prev;
+                p->shadow_page_list[i]->page = i;
+            }
+            else if(i == p->shadowq_size / p->perslab && p->shadowq_size % p->perslab == 1){
+                p->shadow_page_list[i] = get_shadowq_tail(id);
+                p->shadow_page_list[i]->page = i;
+            }
+            // else
+            //     printf("ERROR\n");
+        }
+    }
+    else
+    {
+        if(p->shadow_page_list[pageN] == elem)
+            p->shadow_page_list[pageN] = elem->next;
+        
+        for(int i = pageN + 1;i <= p->shadowq_size / p->perslab;i++){
+            if(p->shadow_page_list[i]){
+                p->shadow_page_list[i]->page = i - 1;
+                if(p->shadow_page_list[i] != get_shadowq_tail(id))
+                    p->shadow_page_list[i] = p->shadow_page_list[i]->next;
+                else if(p->shadow_page_list[i] == get_shadowq_tail(id))
+                    p->shadow_page_list[i] = NULL;
+            }
+            // else
+            //     printf("     ERROR\n");
+            
+        }
     }
 
-    return shadow_it;
+    pthread_mutex_unlock(&shadow_lock);
+}
+
+void incr_slab_hits(uint8_t clsid, uint8_t slabid){
+    if(slabid < 1000){
+        slabclass_t *p = &slabclass[clsid];
+        p->hits[slabid]++;
+    }
 }
 
  shadow_item* get_shadowq_head(unsigned int id) { return (slabclass[id].shadowq_head); }
