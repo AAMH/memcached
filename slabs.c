@@ -23,32 +23,7 @@
 //#define DEBUG_SLAB_MOVER
 /* powers-of-N allocation structures */
 
-typedef struct {
-    unsigned int size;      /* sizes of items */
-    unsigned int perslab;   /* how many items per slab */
 
-    void *slots;           /* list of item ptrs */
-    unsigned int sl_curr;   /* total free items in list */
-
-    unsigned int slabs;     /* how many slabs were allocated for this class */
-
-    void **slab_list;       /* array of slab pointers */
-    unsigned int list_size; /* size of prev array */
-
-    size_t requested; /* The number of requested bytes */
-
-    uint32_t hits[1000];
-
-/*** shadow queue Additions ***/
-    shadow_item *shadowq_head;
-    shadow_item *shadowq_tail;
-    unsigned int shadowq_size;
-    uint32_t shadowq_max_items;
-    uint32_t shadowq_hits[1000];
-    //uint32_t shadowq_hits;
-    uint32_t q_misses;
-    shadow_item **shadow_page_list;
-} slabclass_t;
 
 static slabclass_t slabclass[MAX_NUMBER_OF_SLAB_CLASSES];
 static size_t mem_limit = 0;
@@ -65,11 +40,15 @@ static int prev_victim = POWER_SMALLEST;
 static int slab_shadowq_dec_victim = POWER_SMALLEST;
 static bool greedy = false;
 
+// volatile int shadow_update_signal;
+// volatile int shadow_update_signal2;
 /**
  * Access to the slab allocator is protected by this lock
  */
 static pthread_mutex_t slabs_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t slabs_rebalance_lock = PTHREAD_MUTEX_INITIALIZER;
+//static pthread_mutex_t extra_lock = PTHREAD_MUTEX_INITIALIZER;
+//static pthread_mutex_t shadow_lock = PTHREAD_MUTEX_INITIALIZER;
 
 
 static bool rebal_source_ext = false;       // indicating if reassigning is being used to take memory from an external source
@@ -82,7 +61,8 @@ static int slab_to_release = -1;
 
 void checkForSpare();
 void waitForSpare();
-void update_shadow_page_list(int id, int pageN, bool is_increasing, shadow_item *elem);
+void update_shadow_insert(int id, que_item* it);
+void update_shadow_remove(int id, que_item* it);
 /*
  * Forward Declarations
  */
@@ -163,8 +143,14 @@ void slabs_init(const size_t limit, const double factor, const bool prealloc, co
         slabclass[i].size = size;
         slabclass[i].perslab = settings.slab_page_size / slabclass[i].size;
         slabclass[i].shadowq_max_items = settings.shadowq_size / slabclass[i].size;
+        // if(i == 7 || i == 6)
+        //     slabclass[i].shadowq_max_items = 10 * slabclass[i].shadowq_max_items;
         printf("shadowq_max_items: queue %d, slab_size %d, perslab %d, shadowq_size %d\n",i,size,slabclass[i].perslab, slabclass[i].shadowq_max_items);
-        slabclass[i].shadow_page_list = (shadow_item**) malloc(1000*sizeof(shadow_item*));
+        slabclass[i].shadow_page_list = (shadow_item**) malloc(4000*sizeof(struct _shadow_item_t));
+        
+        // slabclass[i].shadow_op_qu = (uint8_t *) malloc(10000*sizeof(uint8_t));
+        // memset(slabclass[i].shadow_op_qu,0,10000*sizeof(uint8_t));
+        // slabclass[i].shadow_op_qu_index = -1;
 
         if (slab_sizes == NULL)
             size *= factor;
@@ -1436,6 +1422,93 @@ void stop_slab_rebalance_thread(void) {
      pthread_join(rebalance_tid, NULL);
 }
 
+/* Thread for updating shadow queue pointers */
+
+static pthread_t shadow_update_tid;
+static pthread_t shadow_update_tid2;
+
+static void *shadow_update_thread(void *arg) {
+    
+    que_item *temp = NULL;
+    while(1) {
+
+        if(shadow_update_signal == 1){
+            for(int i = POWER_SMALLEST;i <= power_largest;i++){
+                temp = get_shadowq_update_head(i);
+                if(temp){
+                    pthread_mutex_lock(&shadow_lock);
+                    if(temp->op_code == 0)
+                        update_shadow_insert(i, temp);
+                    else if(temp->op_code == 1)
+                        update_shadow_remove(i, temp);
+                    
+                    pthread_mutex_lock(&extra_lock);
+                    set_shadowq_update_head(temp->next,i);
+                    if(!temp->next)
+                        set_shadowq_update_tail(temp->next,i);
+                    pthread_mutex_unlock(&extra_lock);
+                    free(temp);
+                    pthread_mutex_unlock(&shadow_lock);
+                }
+            }
+            usleep(250);
+        }
+        else
+            usleep(250);
+    }
+    
+    return NULL;
+}
+
+int start_shadow_update_thread(){
+
+    int ret;
+
+    if ((ret = pthread_create(&shadow_update_tid, NULL,
+        shadow_update_thread, NULL)) != 0) {
+        fprintf(stderr, "Can't create shadow_update thread: %s\n",
+            strerror(ret));
+        return -1;
+    }
+
+    return 0;
+}
+
+static void *shadow_update_thread2(void *arg) {
+    
+    while(1) {
+
+        if (shadow_update_signal2 == 1){
+        for(int i = POWER_SMALLEST;i <= power_largest;i++)
+            if(slabclass[i].shadow_remove_count > 0){ 
+                pthread_mutex_lock(&shadow_lock);
+                //update_shadow_remove(i);
+                pthread_mutex_unlock(&shadow_lock);    
+            }
+        }
+        // if (shadow_update_signal2 == 1)
+        //     update_shadow_remove();
+        else
+            usleep(250);
+    }
+    
+    return NULL;
+}
+
+int start_shadow_update_thread2(){
+
+    int ret;
+
+    if ((ret = pthread_create(&shadow_update_tid2, NULL,
+        shadow_update_thread2, NULL)) != 0) {
+        fprintf(stderr, "Can't create shadow_update thread: %s\n",
+            strerror(ret));
+        return -1;
+    }
+
+    return 0;
+}
+
 void slabs_stats_file_write(FILE *f, FILE *f2,struct thread_stats thread_stats){
 
     bool b = false;
@@ -1614,9 +1687,9 @@ void find_highest_mu(){
 
         for(int i = POWER_SMALLEST;i <= power_largest;i++)
             if(slabclass[i].slabs > 0)
-                for(int j = 999;j >= 0;j--){
+                for(int j = 3999;j >= 0;j--){
                     //printf("page %d : %d\n",j,slabclass[5].shadowq_hits[j]);
-                    if(slabclass[i].shadowq_hits[j] > SHADOWQ_HIT_THRESHOLD){
+                    if(slabclass[i].shadowq_hits[j] > (j+1) * SHADOWQ_HIT_THRESHOLD){
                         temp = 0;
                         for(int k = j;k >= 0;k--)
                             temp += slabclass[i].shadowq_hits[k];
@@ -1659,7 +1732,8 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
             slab_shadowq_dec_victim = ((slab_shadowq_dec_victim + 1 - POWER_SMALLEST) % (power_largest - POWER_SMALLEST + 1)) + POWER_SMALLEST; //round robin
         } while (slab_shadowq_dec_victim == shadow_it->slabs_clsid);
         //slabclass[slab_shadowq_dec_victim].shadowq_hits--;
-        slabclass[shadow_it->slabs_clsid].shadowq_hits[x]++;
+        if(x >= 0 && x <= 3999)
+            slabclass[shadow_it->slabs_clsid].shadowq_hits[x]++;
         slabclass[shadow_it->slabs_clsid].q_misses++;
 
     }
@@ -1708,46 +1782,119 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey) {
     return shadow_it;
 }
 
-void update_shadow_page_list(int id, int pageN, bool inserting, shadow_item *elem){
+void update_shadow_insert(int id, que_item* it){
     slabclass_t *p = &slabclass[id];
-    pthread_mutex_lock(&shadow_lock);
+    //pthread_mutex_lock(&shadow_lock);
+    //shadow_item * temp = NULL;
+    //if(p->shadow_insert_count){
 
-    if(inserting){
-        p->shadow_page_list[0] = get_shadowq_head(id);
-
-        for(int i = 1;i <= p->shadowq_size / p->perslab;i++){
-            if(p->shadow_page_list[i]){
-                p->shadow_page_list[i] = p->shadow_page_list[i]->prev;
-                p->shadow_page_list[i]->page = i;
-            }
-            else if(i == p->shadowq_size / p->perslab && p->shadowq_size % p->perslab == 1){
-                p->shadow_page_list[i] = get_shadowq_tail(id);
-                p->shadow_page_list[i]->page = i;
-            }
-            // else
-            //     printf("ERROR\n");
-        }
-    }
-    else
-    {
-        if(p->shadow_page_list[pageN] == elem)
-            p->shadow_page_list[pageN] = elem->next;
-        
-        for(int i = pageN + 1;i <= p->shadowq_size / p->perslab;i++){
-            if(p->shadow_page_list[i]){
-                p->shadow_page_list[i]->page = i - 1;
-                if(p->shadow_page_list[i] != get_shadowq_tail(id))
-                    p->shadow_page_list[i] = p->shadow_page_list[i]->next;
-                else if(p->shadow_page_list[i] == get_shadowq_tail(id))
-                    p->shadow_page_list[i] = NULL;
-            }
-            // else
-            //     printf("     ERROR\n");
+        p->shadow_page_list[0] = it->curr_it;
+        // if(!p->shadow_page_list[0]->next)
+        //     printf("FUCKFUCKFUCKFUCKFUCKFCUKFUCK\n");
+        for(int i = 1;i <= it->shadowqsize / p->perslab && i <= 3999;i++){
+            // if(p->shadow_page_list[i]->prev == NULL){
+            //     p->shadow_insert_count = 0;
+            //     break;
+            // }
+            if(i == it->shadowqsize / p->perslab && it->shadowqsize % p->perslab == 0)
+                    break;
+                //if(p->shadow_page_list[i]->prev != get_shadowq_head(id))
+                //if(p->shadow_page_list[i]){
+                    // if(p->shadow_page_list[i] == get_shadowq_head(id))
+                    //      printf("FUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU   %d  %d \n",id, i);
+                if(p->shadow_page_list[i])
+                    p->shadow_page_list[i] = p->shadow_page_list[i]->prev;
+                else if(i == it->shadowqsize / p->perslab && it->shadowqsize % p->perslab == 1){
+                    //if(!p->shadow_page_list[i-1]){
+                    //    printf("??????? cls %d page %d\n",id,i-1);
+                    //    p->shadow_page_list[i-1] = get_nextlimit(p->shadow_page_list[i-2],p->perslab);
+                    //}
+                    //if(!it->curr_tail->prev)
+                    //    printf("WHAT???????????  %d    %d \n",id,i);
+                    /*printf("cls %d - i %d ",id,i);*/ p->shadow_page_list[i] = get_nextlimit(p->shadow_page_list[i-1],p->perslab);//it->curr_tail;//get_shadowq_tail(id);//get_nextlimit(p->shadow_page_list[i-1],p->perslab); //it->curr_tail;
+                    //printf(" NOW: %p\n",p->shadow_page_list[i]);
+                }
+                
+                if(p->shadow_page_list[i])
+                    p->shadow_page_list[i]->page = i;
+                }
             
-        }
+            //}
+            // else if(i == p->shadowq_size / p->perslab && p->shadowq_size % p->perslab == 1){
+            //     p->shadow_page_list[i] = get_shadowq_tail(id);
+            //     p->shadow_page_list[i]->page = i;
+            // }
+       // }
+        //p->shadow_insert_count--;
+    //}
+    for(int i = it->shadowqsize / p->perslab + 1;i <= 3999;i++){
+        p->shadow_page_list[i] = NULL;
     }
 
-    pthread_mutex_unlock(&shadow_lock);
+        //free(it);
+    //shadow_update_signal = 0;
+    //pthread_mutex_unlock(&shadow_lock);
+}
+
+void update_shadow_remove(int id, que_item* it){
+    slabclass_t *p = &slabclass[id];
+    //pthread_mutex_lock(&shadow_lock);
+    //que_item *que_it = NULL;
+    
+    //if(p->shadow_remove_count && p->shadow_remove_head){
+        //que_it = p->shadow_remove_head;
+
+        //if(p->shadow_remove_head->page_number < p->shadowq_size / p->perslab)
+
+        if(p->shadow_page_list[it->page_number] == it->curr_it){
+            //printf("- %d - %p next %p \n",it->page_number,it->curr_it,it->curr_nextit);
+            //if(it->curr_nextit)
+                p->shadow_page_list[it->page_number] = it->curr_nextit;
+        } 
+
+        // for(int i = 1;i <= p->shadowq_size / p->perslab && i <= 3999;i++)
+        //     if(p->shadow_page_list[i] == it->curr_it){
+        //         p->shadow_page_list[i] = get_nextlimit(p->shadow_page_list[i - 1],p->perslab);    
+        //         break;
+        //     }
+   
+        for(int i = it->page_number + 1;i <= it->shadowqsize / p->perslab && i <= 3999;i++){
+            //if(p->shadow_page_list[i]){
+                if(i == it->shadowqsize / p->perslab && it->shadowqsize % p->perslab == 0)
+                    break;
+                
+                p->shadow_page_list[i]->page = i - 1;
+                //if(p->shadow_page_list[i] != get_shadowq_tail(id))
+                    p->shadow_page_list[i] = p->shadow_page_list[i]->next;
+                //else if(p->shadow_page_list[i] == get_shadowq_tail(id))
+                    // p->shadow_page_list[i] = NULL;
+            //}
+        }
+
+        // if(p->shadow_update_head->next)
+        //     p->shadow_update_head = p->shadow_update_head->next;
+        // else if(p->shadow_update_tail && p->shadow_update_tail != p->shadow_update_head){
+        //     p->shadow_update_head = p->shadow_update_tail;
+        // }
+        // else{
+        //     p->shadow_update_head = NULL;
+        //     p->shadow_update_tail = NULL;
+        // }
+        //free(it);
+
+        //p->shadow_remove_count--;
+        // if(p->shadow_remove_head->next)
+        //     p->shadow_remove_head = p->shadow_remove_head->next;
+        // else{
+        //     p->shadow_remove_head = NULL;
+        //     p->shadow_remove_tail = NULL;
+        //     p->shadow_remove_count = 0;
+        //     //break;
+        // }
+        //free(que_it);
+    //}
+    //shadow_update_signal2 = 0;
+    //pthread_mutex_unlock(&shadow_lock);
 }
 
 void incr_slab_hits(uint8_t clsid, uint8_t slabid){
@@ -1757,6 +1904,7 @@ void incr_slab_hits(uint8_t clsid, uint8_t slabid){
     }
 }
 
+ void* get_slabclass(int id){ return &slabclass[id]; }
  shadow_item* get_shadowq_head(unsigned int id) { return (slabclass[id].shadowq_head); }
  void set_shadowq_head(shadow_item *elem, unsigned int id) { slabclass[id].shadowq_head = elem; }
  shadow_item* get_shadowq_tail(unsigned int id) { return (slabclass[id].shadowq_tail); }
@@ -1765,3 +1913,9 @@ void incr_slab_hits(uint8_t clsid, uint8_t slabid){
  unsigned int get_shadowq_size(unsigned int id) { return (slabclass[id].shadowq_size); }
  void dec_shadowq_size(unsigned int id) { slabclass[id].shadowq_size--; }
  void inc_shadowq_size(unsigned int id) { slabclass[id].shadowq_size++; }
+
+ que_item* get_shadowq_update_head(unsigned int id) { return (slabclass[id].shadow_update_head); }
+ void set_shadowq_update_head(que_item *elem, unsigned int id) { slabclass[id].shadow_update_head = elem; }
+ que_item* get_shadowq_update_tail(unsigned int id) { return (slabclass[id].shadow_update_tail); }
+ void set_shadowq_update_tail(que_item *elem, unsigned int id) { slabclass[id].shadow_update_tail = elem; }
+ void insert_shadowq_update(que_item *elem, unsigned int id) { slabclass[id].shadow_update_tail->next = elem; }

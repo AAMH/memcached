@@ -228,7 +228,7 @@ static void settings_init(void) {
     settings.backlog = 1024;
     settings.binding_protocol = negotiating_prot;
     settings.item_size_max = 1024 * 1024; /* The famous 1MB upper limit. */
-    settings.shadowq_size = 1000 * 1024 * 1024; /* 1000 * 1MB */
+    settings.shadowq_size = 4000 * 1024 * 1024; /* 1000 * 1MB */
     settings.slab_page_size = 1024 * 1024; /* chunks are split from 1MB pages. */
     settings.slab_chunk_size_max = settings.slab_page_size;
     settings.isGreedy = false;
@@ -6732,9 +6732,17 @@ int main (int argc, char **argv) {
        exit(EXIT_FAILURE);
     }
 
+    if (start_shadow_update_thread() == -1){
+       exit(EXIT_FAILURE);
+    }
+
+    // if (start_shadow_update_thread2() == -1){
+    //    exit(EXIT_FAILURE);
+    // }
+
     if (start_slab_rebalance_thread() == -1) {
         exit(EXIT_FAILURE);
-     }
+    }
 
     /* initialise clock event */
     clock_handler(0, 0, 0);
