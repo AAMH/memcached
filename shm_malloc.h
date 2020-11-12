@@ -13,26 +13,34 @@ struct tracker {        /* Shared memory structure to keep track of current poin
     bool   spare_lock;          // lock preventing more than one tenant to access the spare slab
     bool   spare_requested;
 
-    long   min_misses;          // shared variable used to find the minimum number of shadowq hits among tenants
+    double   min_score;          
     int    min_id;
+
+    double   max_score;          
+    int    max_id;
+
+    double    preset_share[4];
 };
 
 char tracker_name[20], semaph_name[20], slab_name[20];
 void init_shared_names(int x);
 
 void * shm_malloc(size_t n);    // MAIN ALLOCATION FUNCTION
-void * shm_mallocAt(size_t n);  // allocates the spare slab
+void * shm_mallocAt(size_t n, int id);  // allocates the spare slab
 
-void * set_spare_mem(void * ptr, int id);
+void * set_spare_mem(void * ptr, size_t n, int cls, int id);
 int    get_spare_clsid();
 
 
-bool   set_min_miss(long misses,int id);
+bool   set_scores(double sc1, double sc2, int id);
+bool   compare_minID(int id,double sc);
+bool   compare_maxID(int id,double sc);
 bool   req_spare();
 bool   spare_needed();
 bool   reset_locks();           // resets spare availability
 bool   lock_spare();
 bool   unlock_spare();
 bool   is_spare_avail();
+bool   signal_alloc_free(int id, size_t size);
 
 extern struct tracker get_tracker(void);    // function that each instance can use to get the most recent status of the tracker

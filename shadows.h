@@ -2,6 +2,22 @@
 #include <stdbool.h>
 #define SHADOWQ_HIT_THRESHOLD 256
 
+
+typedef struct _avl_node_t { 
+    struct _avl_node_t *parent;
+	struct _avl_node_t *left;
+    struct _avl_node_t *right; 
+
+    struct timeval       time;
+    uint32_t             weight;
+
+	int                  height; 
+} node_t; 
+
+typedef struct _avl_tree_t {
+    node_t *root;
+} tree_t;
+
 typedef struct _shadow_item_t {
     struct _shadow_item_t *next;
     struct _shadow_item_t *prev;
@@ -10,6 +26,7 @@ typedef struct _shadow_item_t {
     uint8_t                slabs_clsid;
     char                   *key;
     int                    page;      /*shadow page number*/
+    struct timeval         last_seen_time;
 } shadow_item;
 
 typedef struct _que_item_t{
@@ -37,10 +54,7 @@ typedef struct {
 
     size_t requested; /* The number of requested bytes */
 
-    uint32_t hits[1000];
-
-    //uint8_t *shadow_op_qu;
-    //int shadow_op_qu_index;
+    uint32_t hits[4000];
 
 /*** shadow queue Additions ***/
     shadow_item *shadowq_head;
@@ -51,6 +65,8 @@ typedef struct {
     //uint32_t shadowq_hits;
     uint32_t q_misses;
     shadow_item **shadow_page_list;
+
+    tree_t *tree;
     
     uint32_t shadow_insert_count;
     uint32_t shadow_remove_count;
@@ -61,17 +77,23 @@ typedef struct {
 
 static pthread_mutex_t extra_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t shadow_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_mutex_t tree_lock = PTHREAD_MUTEX_INITIALIZER;
+
+extern int time_elapsed;
+extern int timee;
 
 volatile int shadow_update_signal;
 volatile int shadow_update_signal2;
 
-extern int shad_id, shad_id2, shadow_pageN;
-extern shadow_item *elemthread;
-
-void reinsert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid);
 void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid);
-void remove_shadowq_item(shadow_item *elem);
+void remove_shadowq_item(shadow_item *elem, node_t * node);
 void evict_shadowq_item(shadow_item *shadowq_it);
 
+tree_t *new_tree();
+node_t *search_tree(node_t *root, struct timeval key);
+void insert_tree_node(tree_t *t, node_t *n);
+void delete_tree_node(tree_t *t, node_t *z);
+void fix_weights(node_t *root, node_t *node);
+int  calculate_reuse_distance(node_t *root, node_t *node);
+
 bool is_on_first_page(shadow_item *elem, int perslab);
-shadow_item *get_nextlimit(shadow_item *it, int perslab);

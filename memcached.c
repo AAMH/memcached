@@ -398,17 +398,17 @@ static void *file_write_thread(void *arg) {
     int sleep_time = 1;
     
     char file_path_hit[100],file_path_memory[100];
-    mkdir("Log",0755);
-    mkdir("Log/HitRatio",0755);
-    mkdir("Log/Memory",0755);
-    sprintf(file_path_hit,"Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
-    sprintf(file_path_memory,"Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+    // mkdir("Log",0755);
+    // mkdir("Log/HitRatio",0755);
+    // mkdir("Log/Memory",0755);
+    // sprintf(file_path_hit,"Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
+    // sprintf(file_path_memory,"Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
 
-    // mkdir("/home/aseyri2/Log",0755);
-    // mkdir("/home/aseyri2/Log/HitRatio",0755);
-    // mkdir("/home/aseyri2/Log/Memory",0755);
-    // sprintf(file_path_hit,"/home/aseyri2/Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
-    // sprintf(file_path_memory,"/home/aseyri2/Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+    mkdir("/home/aseyri2/Log",0755);
+    mkdir("/home/aseyri2/Log/HitRatio",0755);
+    mkdir("/home/aseyri2/Log/Memory",0755);
+    sprintf(file_path_hit,"/home/aseyri2/Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
+    sprintf(file_path_memory,"/home/aseyri2/Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
     
     FILE *f = fopen(file_path_hit,"w");
     FILE *f2 = fopen(file_path_memory,"w");
@@ -456,17 +456,31 @@ static int start_file_write_thread() {
 /* Thread for calculating marginal utilities */
 
 static pthread_t marginal_utility_tid;
+time_elapsed = 0;
+timee = 0;
 
 static void *marginal_utility_thread(void *arg) {
     
     int sleep_time = 1;
+    struct thread_stats thread_stats;
+    struct slab_stats slab_stats;
+
+    double oldgets = 0, oldhits = 0;
 
     while(1) {
        
         sleep(sleep_time);
+        time_elapsed++;
         
-        find_highest_mu();
-
+        threadlocal_stats_aggregate(&thread_stats);
+        slab_stats_aggregate(&thread_stats, &slab_stats);
+        calculate_scores(thread_stats.get_misses);
+        if((double)thread_stats.get_cmds)
+            timee++;
+        //find_highest_mu(thread_stats.get_misses,(double)(slab_stats.get_hits - oldhits)/ ((double)thread_stats.get_cmds - oldgets) * 100);
+        
+        //oldgets = (double)thread_stats.get_cmds;
+        //oldhits = (double)slab_stats.get_hits;
     }
     
     return NULL;
@@ -6731,14 +6745,6 @@ int main (int argc, char **argv) {
     if (start_marginal_utility_thread() == -1){
        exit(EXIT_FAILURE);
     }
-
-    if (start_shadow_update_thread() == -1){
-       exit(EXIT_FAILURE);
-    }
-
-    // if (start_shadow_update_thread2() == -1){
-    //    exit(EXIT_FAILURE);
-    // }
 
     if (start_slab_rebalance_thread() == -1) {
         exit(EXIT_FAILURE);
