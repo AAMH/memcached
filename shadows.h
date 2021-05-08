@@ -25,20 +25,8 @@ typedef struct _shadow_item_t {
     uint8_t                nkey;      /* key length, w/terminating null and padding */
     uint8_t                slabs_clsid;
     char                   *key;
-    int                    page;      /*shadow page number*/
     struct timeval         last_seen_time;
 } shadow_item;
-
-typedef struct _que_item_t{
-    unsigned int tt;
-    unsigned int page_number;
-    unsigned int op_code;
-    unsigned int shadowqsize;
-    struct _que_item_t *next;
-    shadow_item *curr_tail;
-    shadow_item *curr_it;
-    shadow_item *curr_nextit;
-} que_item;
 
 typedef struct {
     unsigned int size;      /* sizes of items */
@@ -62,28 +50,17 @@ typedef struct {
     unsigned int shadowq_size;
     uint32_t shadowq_max_items;
     uint32_t shadowq_hits[4000];
-    //uint32_t shadowq_hits;
     uint32_t q_misses;
-    shadow_item **shadow_page_list;
 
     tree_t *tree;
-    
-    uint32_t shadow_insert_count;
-    uint32_t shadow_remove_count;
-    que_item *shadow_update_head;
-    que_item *shadow_update_tail;
 
 } slabclass_t;
 
-static pthread_mutex_t extra_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t shadow_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_mutex_t tree_lock = PTHREAD_MUTEX_INITIALIZER;
 
 extern int time_elapsed;
 extern int timee;
-
-volatile int shadow_update_signal;
-volatile int shadow_update_signal2;
 
 void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid);
 void remove_shadowq_item(shadow_item *elem, node_t * node);
@@ -95,5 +72,3 @@ void insert_tree_node(tree_t *t, node_t *n);
 void delete_tree_node(tree_t *t, node_t *z);
 void fix_weights(node_t *root, node_t *node);
 int  calculate_reuse_distance(node_t *root, node_t *node);
-
-bool is_on_first_page(shadow_item *elem, int perslab);

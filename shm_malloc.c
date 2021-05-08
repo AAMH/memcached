@@ -148,12 +148,20 @@ void * shm_mallocAt(size_t n, int id){
     if((ret = fstat(slabs_fd,&buffer)) < 0) {
         printf("fstat() on shared memory failed with errno %d\n", errno);
     }
-    
+
+    int index = n/PAGESIZE;
+    n = (index+1) * PAGESIZE;
+
+    if(track->spare_size < n){
+        printf(" Available size is less than the Requested!\n");
+        n = track->spare_size;
+    }
+
     rptr = mmap(track->spare_mem_start , n,
         PROT_READ | PROT_WRITE, MAP_SHARED , slabs_fd,track->spare_off);
 
     if (rptr == MAP_FAILED) {
-        printf("mmap failed\n");
+        printf("mmap failed at address: %p  requested size: %lu\n",track->spare_mem_start,n);
         return NULL;
     }
 
@@ -238,7 +246,7 @@ void * set_spare_mem(void * ptr, size_t n, int cls, int id){
     track->spare_mem_start = ptr;
     track->spare_mem_clsid = cls;
     track->spare_mem_avail = true;
-    //track->spare_lock = false;
+    track->spare_size = n;
 
     track->preset_share[id] -= n;
 
@@ -273,16 +281,20 @@ bool set_scores(double sc1, double sc2, int id){
         return NULL;
     }
 	
-    if(sc1 > track->max_score && track->min_id != id){
-        track->max_score = sc1;
-        track->max_id = id;
-    }
-
-    if(sc2 < track->min_score && track->max_id != id){
+    if(sc2 < track->min_score){
         track->min_score = sc2;
         track->min_id = id;
     }
+    
+    if(sc1 > track->max_score){
+        track->max_score = sc1;
+        track->max_id = id;
 
+        if(track->min_id == id){
+            track->min_id == -1;
+            track->min_score = 9999999999;
+        }
+    }
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);
@@ -527,8 +539,6 @@ bool reset_locks(){
 	
     track->spare_mem_avail = false;
     track->spare_requested = false;
-//    track->min_misses = 99999999;
-//    track->min_id = -1;
 
     munmap(track, sizeof(struct tracker));
     close(tracker_fd);

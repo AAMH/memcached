@@ -49,9 +49,6 @@ void stop_slab_maintenance_thread(void);
 int start_slab_rebalance_thread(void);
 void stop_slab_rebalance_thread(void);
 
-int start_shadow_update_thread(void);
-int start_shadow_update_thread2(void);
-
 enum reassign_result_type {
     REASSIGN_OK=0, REASSIGN_RUNNING, REASSIGN_BADCLASS, REASSIGN_NOSPARE,
     REASSIGN_SRC_DST_SAME
@@ -73,16 +70,5 @@ unsigned int get_shadowq_size(unsigned int id);
 void dec_shadowq_size(unsigned int id);
 void inc_shadowq_size(unsigned int id);
 void* get_slabclass(int id);
-
-que_item* get_shadowq_update_head(unsigned int id);
-void set_shadowq_update_head(que_item *elem, unsigned int id);
-que_item* get_shadowq_update_tail(unsigned int id);
-void set_shadowq_update_tail(que_item *elem, unsigned int id);
-void insert_shadowq_update(que_item *elem, unsigned int id);
-
-pthread_mutex_t getmutex();
-
-void force_release(void);
-void checkForSpare(void);
 
 #endif

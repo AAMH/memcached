@@ -397,24 +397,28 @@ static void *file_write_thread(void *arg) {
     
     int sleep_time = 1;
     
-    char file_path_hit[100],file_path_memory[100];
-    // mkdir("Log",0755);
-    // mkdir("Log/HitRatio",0755);
-    // mkdir("Log/Memory",0755);
-    // sprintf(file_path_hit,"Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
-    // sprintf(file_path_memory,"Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+    char file_path_hit[100],file_path_memory[100],file_path_stat[100];;
+     mkdir("/users/AMH/Log",0755);
+     mkdir("/users/AMH/Log/HitRatio",0755);
+     mkdir("/users/AMH/Log/Memory",0755);
+     mkdir("/users/AMH/Log/Stats",0755);
+     sprintf(file_path_hit,"/users/AMH/Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
+     sprintf(file_path_memory,"/users/AMH/Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+     sprintf(file_path_stat,"/users/AMH/Log/Stats/stat_stats_%d.csv\0",(settings.port - 11212));
 
-    mkdir("/home/aseyri2/Log",0755);
-    mkdir("/home/aseyri2/Log/HitRatio",0755);
-    mkdir("/home/aseyri2/Log/Memory",0755);
-    sprintf(file_path_hit,"/home/aseyri2/Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
-    sprintf(file_path_memory,"/home/aseyri2/Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
+    //mkdir("~/Log",0755);
+    //mkdir("~/Log/HitRatio",0755);
+    //mkdir("~/Log/Memory",0755);
+    //sprintf(file_path_hit,"~/Log/HitRatio/hit_rate_stats_%d.csv\0",(settings.port - 11212));
+    //sprintf(file_path_memory,"~/Log/Memory/memory_stats_%d.csv\0",(settings.port - 11212));
     
     FILE *f = fopen(file_path_hit,"w");
     FILE *f2 = fopen(file_path_memory,"w");
+    FILE *f3 = fopen(file_path_stat,"w");
 
     fprintf(f,"total,class_2,class_3,class_4,class_5,class_6,class_7,class_8,class_9\n");
     fprintf(f2,"total,class_2,class_3,class_4,class_5,class_6,class_7,class_8,class_9\n");
+    fprintf(f3,"total,hits\n");
 
     struct thread_stats thread_stats;
     struct slab_stats slab_stats;
@@ -429,14 +433,18 @@ static void *file_write_thread(void *arg) {
         if(thread_stats.get_cmds)
             fprintf(f,"%.2f,",(double)slab_stats.get_hits / (double)thread_stats.get_cmds * 100);
         
+        fprintf(f3,"%lu,%lu\n", thread_stats.get_cmds, slab_stats.get_hits);
+        
         slabs_stats_file_write(f,f2,thread_stats);
         
         fflush(f);
         fflush(f2);
+        fflush(f3);
     }
     
     fclose(f);
     fclose(f2);
+    fclose(f3);
     return NULL;
 }
 
@@ -4374,10 +4382,6 @@ static void process_command(conn *c, char *command) {
         process_verbosity_command(c, tokens, ntokens);
     } else if (ntokens >= 3 && strcmp(tokens[COMMAND_TOKEN].value, "lru") == 0) {
         process_lru_command(c, tokens, ntokens);
-    // } else if (ntokens == 2 && (strcmp(tokens[COMMAND_TOKEN].value, "release") == 0)) {
-    //     force_release(); 
-    // } else if (ntokens == 2 && (strcmp(tokens[COMMAND_TOKEN].value, "allocate") == 0)) {
-    //     force_allocate(); 
     } else {
         out_string(c, "ERROR");
     }

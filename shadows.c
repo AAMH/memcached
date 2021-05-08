@@ -313,7 +313,6 @@ shadow_item* create_shadow_item(item *it,u_int8_t clsid,u_int8_t nkey)
     shadow_it->prev = NULL;
     shadow_it->h_next = NULL;
     shadow_it->slabs_clsid = clsid;
-    shadow_it->page = 0;
 
     return shadow_it;
 }
@@ -325,7 +324,6 @@ void insert_shadowq_item(shadow_item *elem, unsigned int slabs_clsid)
     elem->next = NULL;
     elem->prev = NULL;
     elem->slabs_clsid = slabs_clsid;
-    elem->page = 0;
 
     gettimeofday(&elem->last_seen_time, NULL);
 
@@ -397,24 +395,6 @@ void evict_shadowq_item(shadow_item *elem)
    free(elem);
 }
 
-bool is_on_first_page(shadow_item *elem, int perslab)
-{
-    shadow_item *shadowq_tail = get_shadowq_tail(elem->slabs_clsid);
-    shadow_item *shadowq_head = get_shadowq_head(elem->slabs_clsid);
-    shadow_item *elem2 = shadowq_head;
-
-    for(int i = 0;i < perslab;i++){
-        if(elem2 == elem)
-            return true;
-        else if(elem2 == shadowq_tail || elem2 == NULL)
-            return false;
-        else
-            elem2 = elem2->next;
-    }
-
-    return false;
-}
-
 void fix_weights(node_t *root, node_t *node)
 {
     while(node != root){
@@ -428,6 +408,8 @@ int calculate_reuse_distance(node_t *root, node_t *node)
 {
     int x = node->weight;
     while(node != root){
+	if(node->parent == NULL)
+            break;
         if(node == (node->parent)->left)
             x += (node->parent)->weight + 1;
         node = node->parent;
@@ -466,7 +448,7 @@ shadow_item* slabs_shadowq_lookup(char *key, const size_t nkey)
         }
         else
         {
-            printf("Not Found!    \n");
+            //printf("Not Found!    \n");
             pthread_mutex_unlock(&tree_lock);
             return NULL;
         }

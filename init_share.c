@@ -133,6 +133,7 @@ int main(int argc, char **argv)
         track[i]->spare_mem_clsid = -1;
         track[i]->spare_mem_start = NULL;
         track[i]->spare_mem_avail = false;
+        track[i]->spare_size = 0;
 
         track[i]->min_score = 9999999999;          
         track[i]->min_id = -1;
@@ -150,6 +151,41 @@ int main(int argc, char **argv)
     track[1]->preset_share[2] = 0.23 * mem_allocated;
     track[1]->preset_share[3] = 0.256 * mem_allocated;
 
+    track[2]->preset_share[0] = 0.257 * mem_allocated;
+    track[2]->preset_share[1] = 0.257 * mem_allocated;
+    track[2]->preset_share[2] = 0.23 * mem_allocated;
+    track[2]->preset_share[3] = 0.256 * mem_allocated;
+
+    track[3]->preset_share[0] = 0.257 * mem_allocated;
+    track[3]->preset_share[1] = 0.257 * mem_allocated;
+    track[3]->preset_share[2] = 0.23 * mem_allocated;
+    track[3]->preset_share[3] = 0.256 * mem_allocated;
+
+    track[4]->preset_share[0] = 0.257 * mem_allocated;
+    track[4]->preset_share[1] = 0.257 * mem_allocated;
+    track[4]->preset_share[2] = 0.23 * mem_allocated;
+    track[4]->preset_share[3] = 0.256 * mem_allocated;
+
+    track[5]->preset_share[0] = 0.257 * mem_allocated;
+    track[5]->preset_share[1] = 0.257 * mem_allocated;
+    track[5]->preset_share[2] = 0.23 * mem_allocated;
+    track[5]->preset_share[3] = 0.256 * mem_allocated;
+
+    track[6]->preset_share[0] = 0.257 * mem_allocated;
+    track[6]->preset_share[1] = 0.257 * mem_allocated;
+    track[6]->preset_share[2] = 0.23 * mem_allocated;
+    track[6]->preset_share[3] = 0.256 * mem_allocated;
+
+    track[7]->preset_share[0] = 0.257 * mem_allocated;
+    track[7]->preset_share[1] = 0.257 * mem_allocated;
+    track[7]->preset_share[2] = 0.23 * mem_allocated;
+    track[7]->preset_share[3] = 0.256 * mem_allocated;
+
+    track[8]->preset_share[0] = 0.257 * mem_allocated;
+    track[8]->preset_share[1] = 0.257 * mem_allocated;
+    track[8]->preset_share[2] = 0.23 * mem_allocated;
+    track[8]->preset_share[3] = 0.256 * mem_allocated;
+    
     printf("tracking segments initialized\n");
 
     /* Map shared memory slab segment */
